@@ -4,5 +4,83 @@
         "mem": "8g",
         "partition": "norm",
         "time": "0-04:00:00"
+    },
+    "coverage": {
+        "threads": 16,
+        "mem": "8G",
+        "time": "04:00:00",
+        "partition": "norm"
+    },
+    "frag_length_bins": {
+        "threads": 16,
+        "mem": "8G",
+        "time": "04:00:00",
+        "partition": "norm"
+    },
+    "frag_length_intervals": {
+        "threads": 16,
+        "mem": "8G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "end_motifs": {
+        "threads": 24,
+        "mem": "4G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "interval_end_motifs": {
+        "threads": 16,
+        "mem": "4G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "mds": {
+        "threads": 16,
+        "mem": "2G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "delfi": {
+        "threads": 24,
+        "mem": "16G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "wps": {
+        "threads": 24,
+        "mem": "8G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "adjust_wps": {
+        "threads": 24,
+        "mem": "8G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "cleavage_profile": {
+        "threads": 24,
+        "mem": "8G",
+        "time": "08:00:00",
+        "partition": "norm"
+    },
+    "agg_wps": {
+        "threads": 8,
+        "mem": "4G",
+        "time": "04:00:00",
+        "partition": "norm"
+    },
+    "agg_adjust_wps": {
+        "threads": 8,
+        "mem": "4G",
+        "time": "04:00:00",
+        "partition": "norm"
+    },
+    "agg_cleavage_profile": {
+        "threads": 8,
+        "mem": "4G",
+        "time": "04:00:00",
+        "partition": "norm"
     }
 }
