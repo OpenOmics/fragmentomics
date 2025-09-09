@@ -52,7 +52,6 @@ def main(args):
     for _file in args.files:
         fn_outs.append(get_clean_fn(_file))
     duplicates = list(set([item for item, count in Counter(fn_outs).items() if count > 1]))
-    import ipdb; ipdb.set_trace()
     if duplicates:
         raise ValueError('Duplicate file basenames, will cause collbering of data.\n' + 
                          f'Please re-name your files to have distinct basenames, duplicated: {", ".join(duplicates)}')
