@@ -51,6 +51,7 @@ rule stage_bams:
     output:
         expand(os.path.join(bam_dir, "{sample}.sorted.bam"), sample=sample_stems)
     params:
+        rname                   = "stage_bams",
         bam_dir                  = bam_dir,
         python_script            = os.path.join(bin_dir, 'stage_input_files.py'),
         memory                   = str(config["cluster"]["stage_bams"].get("mem", default_threads)).replace('G' ,'')
