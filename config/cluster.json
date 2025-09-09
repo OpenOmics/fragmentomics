@@ -5,6 +5,12 @@
         "partition": "norm",
         "time": "0-04:00:00"
     },
+    "stage_bams": {
+        "threads": 48,
+        "mem": "96G",
+        "time": "12:00:00",
+        "partition": "norm"
+    },
     "coverage": {
         "threads": 16,
         "mem": "8G",

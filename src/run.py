@@ -14,14 +14,16 @@ from utils import (git_commit_hash,
     exists,
     err)
 
-from . import version as __version__
+from . import __pipeline__, version as __version__
 
 
 def init(repo_path, output_path, links=[], required=['workflow', 'resources', 'config']):
-    """Initialize the output directory. If user provides a output
+    """
+    Initialize the output directory. If user provides a output
     directory path that already exists on the filesystem as a file 
     (small chance of happening but possible), a OSError is raised. If the
     output directory PATH already EXISTS, it will not try to create the directory.
+
     @param repo_path <str>:
         Path to installation source code and its templates
     @param output_path <str>:
@@ -50,15 +52,17 @@ def init(repo_path, output_path, links=[], required=['workflow', 'resources', 'c
 
     # Create renamed symlinks for each rawdata 
     # file provided as input to the pipeline
-    inputs = sym_safe(input_data = links, target = output_path)
+    inputs = stage_work_files(links, output_path)
 
     return inputs
 
 
 def copy_safe(source, target, resources = []):
-    """Private function: Given a list paths it will recursively copy each to the
+    """
+    Given a list paths it will recursively copy each to the
     target location. If a target path already exists, it will NOT over-write the
     existing paths data.
+
     @param resources <list[str]>:
         List of paths to copy over to target location
     @params source <str>:
@@ -70,91 +74,83 @@ def copy_safe(source, target, resources = []):
     for resource in resources:
         destination = os.path.join(target, resource)
         if not exists(destination):
-            # Required resources do not exist
             copytree(os.path.join(source, resource), destination)
+    
+    return
 
 
-def sym_safe(input_data, target):
-    """Creates re-named symlinks for each FastQ file provided
-    as input. If a symlink already exists, it will not try to create a new symlink.
-    If relative source PATH is provided, it will be converted to an absolute PATH.
+def stage_work_files(input_data, output_dir):
+    """
+    TODO
+
     @param input_data <list[<str>]>:
         List of input files to symlink to target location
     @param target <str>:
         Target path to copy templates and required resources
-    @return input_fastqs list[<str>]:
-        List of renamed input FastQs
+    @return input_files list[<str>]:
+        List of renamed input file
     """
-    input_fastqs = [] # store renamed fastq file names
-    for file in input_data:
-        filename = os.path.basename(file)
-        renamed = os.path.join(target, rename(filename))
-        input_fastqs.append(renamed)
+    supported_files = [
+        'bam',
+        'cram',
+        'sam'
+    ]
 
-        if not exists(renamed):
-            # Create a symlink if it does not already exist
-            # Follow source symlinks to resolve any binding issues
-            os.symlink(os.path.abspath(os.path.realpath(file)), renamed)
+    # validate
+    invalid_files = []
+    for _file in input_data:
+        check = False
+        for _ext in supported_files:
+            if _file.lower().endswith(f'.{_ext.lower()}'):
+                check = True
+                break
+        if not check:
+            invalid_files.append(os.path.basename(_file))
 
-    return input_fastqs
-
-
-def rename(filename):
-    """Dynamically renames FastQ file to have one of the following extensions: *.R1.fastq.gz, *.R2.fastq.gz
-    To automatically rename the fastq files, a few assumptions are made. If the extension of the
-    FastQ file cannot be infered, an exception is raised telling the user to fix the filename
-    of the fastq files.
-    @param filename <str>:
-        Original name of file to be renamed
-    @return filename <str>:
-        A renamed FastQ filename
-    """
-    # Covers common extensions from SF, SRA, EBI, TCGA, and external sequencing providers
-    # key = regex to match string and value = how it will be renamed
-    extensions = {
-        # Matches: _R[12]_fastq.gz, _R[12].fastq.gz, _R[12]_fq.gz, etc.
-        ".R1.f(ast)?q.gz$": ".R1.fastq.gz",
-        ".R2.f(ast)?q.gz$": ".R2.fastq.gz",
-        # Matches: _R[12]_001_fastq_gz, _R[12].001.fastq.gz, _R[12]_001.fq.gz, etc.
-        # Capture lane information as named group
-        ".R1.(?P<lane>...).f(ast)?q.gz$": ".R1.fastq.gz",
-        ".R2.(?P<lane>...).f(ast)?q.gz$": ".R2.fastq.gz",
-        # Matches: _[12].fastq.gz, _[12].fq.gz, _[12]_fastq_gz, etc.
-        "_1.f(ast)?q.gz$": ".R1.fastq.gz",
-        "_2.f(ast)?q.gz$": ".R2.fastq.gz"
-    }
-
-    if (filename.endswith('.R1.fastq.gz') or
-        filename.endswith('.R2.fastq.gz')):
-        # Filename is already in the correct format
-        return filename
-
-    converted = False
-    for regex, new_ext in extensions.items():
-        matched = re.search(regex, filename)
-        if matched:
-            # regex matches with a pattern in extensions
-            converted = True
-            filename = re.sub(regex, new_ext, filename)
-            break # only rename once
-
-    if not converted:
-        raise NameError("""\n\tFatal: Failed to rename provided input '{}'!
-        Cannot determine the extension of the user provided input file.
-        Please rename the file list above before trying again.
-        Here is example of acceptable input file extensions:
-          sampleName.R1.fastq.gz      sampleName.R2.fastq.gz
-          sampleName_R1_001.fastq.gz  sampleName_R2_001.fastq.gz
-          sampleName_1.fastq.gz       sampleName_2.fastq.gz
-        Please also check that your input files are gzipped?
-        If they are not, please gzip them before proceeding again.
-        """.format(filename, sys.argv[0])
+    if invalid_files:
+        raise ValueError(
+            f"The pipeline {__pipeline__} only accepts {'/'.join(supported_files)} file types!" + \
+            f"\t> These files are invalid: {', '.join(invalid_files)}"
         )
 
-    return filename
+    # sym-link
+    linked_files = link_files_to_output(input_data, output_dir)
+    
+    return linked_files
 
 
-def setup(sub_args, ifiles, repo_path, output_path):
+def santitize_fn(unclean_fn):
+    """
+    TODO
+    """
+    allowed_chars = re.compile(r"[^a-zA-Z0-9_.-]")
+    sanitized = allowed_chars.sub("_", unclean_fn)
+    sanitized = sanitized.strip()
+    if sanitized.startswith('.'):
+        sanitized = '_' + sanitized[1:]
+    if sanitized.endswith('.'):
+        sanitized = sanitized[:-1] + '_'
+    if '.sorted' in sanitized:
+        sanitized = sanitized.replace('.sorted', '')
+    return sanitized
+
+
+def link_files_to_output(files, output_dir):
+    """
+    TODO
+    """
+    linked_files = []
+    for file in files:
+        filename = os.path.basename(file)
+        renamed = os.path.join(output_dir, santitize_fn(filename))
+
+        if not exists(renamed):
+            os.symlink(os.path.abspath(os.path.realpath(file)), renamed)
+            linked_files.append(renamed)
+    return linked_files
+
+
+def setup(sub_args, ifiles, repo_path, output_path, config_extra=None):
     """Setup the pipeline for execution and creates config file from templates
     @param sub_args <parser.parse_args() object>:
         Parsed arguments for run sub-command
@@ -162,6 +158,8 @@ def setup(sub_args, ifiles, repo_path, output_path):
         Path to installation or source code and its templates
     @param output_path <str>:
         Pipeline output path, created if it does not exist
+    @param config_extra <str>:
+        Function for injecting additional processing on to `config`
     @return config <dict>:
          Config dictionary containing metadata to run the pipeline
     """
@@ -194,6 +192,7 @@ def setup(sub_args, ifiles, repo_path, output_path):
     # Create the global or master config 
     # file for pipeline, config.json
     config = join_jsons(required.values()) # uses templates in config/*.json 
+    config['cluster'] = json.load(open(os.path.join(output_path, 'config', 'cluster.json')))
     config['project'] = {}
     config = add_user_information(config)
     config = add_rawdata_information(sub_args, config, ifiles)
@@ -219,6 +218,10 @@ def setup(sub_args, ifiles, repo_path, output_path):
             v = str(v)
         config['options'][opt] = v
 
+    if config_extra:
+        if not callable(config_extra):
+            raise ValueError('`config_extra` needs to be a callable function')
+        config = config_extra(config)
 
     return config
 
@@ -423,18 +426,11 @@ def add_sample_metadata(input_files, config, group=None):
     @return config <dict>:
         Updated config with basenames, labels, and groups (if provided)
     """
-    import re
-
-    # TODO: Add functionality for basecase 
-    # when user has samplesheet
-    added = []
     config['samples'] = []
     for file in input_files:
         # Split sample name on file extension
-        sample = re.split('\.R[12]\.fastq\.gz', os.path.basename(file))[0]
-        if sample not in added:
-            # Only add PE sample information once
-            added.append(sample)
+        sample = re.split('(?i)\\.(?:sorted\\.)?(?:bam|sam|cram)', os.path.basename(file))[0]
+        if sample not in config['samples']:
             config['samples'].append(sample)
 
     return config
@@ -454,16 +450,6 @@ def add_rawdata_information(sub_args, config, ifiles):
     @return config <dict>:
          Updated config dictionary containing user information (username and home directory)
     """
-
-    # Determine whether dataset is paired-end
-    # or single-end
-    # Updates config['project']['nends'] where
-    # 1 = single-end, 2 = paired-end, -1 = bams
-    convert = {1: 'single-end', 2: 'paired-end', -1: 'bam'}
-    nends = get_nends(ifiles)  # Checks PE data for both mates (R1 and R2)
-    config['project']['nends'] = nends
-    config['project']['filetype'] = convert[nends]
-
     # Finds the set of rawdata directories to bind
     rawdata_paths = get_rawdata_bind_paths(input_files = sub_args.input)
     config['project']['datapath'] = ','.join(rawdata_paths)
@@ -509,73 +495,6 @@ def image_cache(sub_args, config, repo_path):
     config.update(data)
 
     return config
-
-
-def get_nends(ifiles):
-    """Determines whether the dataset is paired-end or single-end.
-    If paired-end data, checks to see if both mates (R1 and R2) are present for each sample.
-    If single-end, nends is set to 1. Else if paired-end, nends is set to 2.
-    @params ifiles list[<str>]:
-        List containing pipeline input files (renamed symlinks)
-    @return nends_status <int>:
-         Integer reflecting nends status: 1 = se, 2 = pe, -1 = bams
-    """
-    # Determine if dataset contains paired-end data
-    paired_end = False
-    bam_files = False
-    nends_status = 1
-    for file in ifiles:
-        if file.endswith('.bam'):
-            bam_files = True
-            nends_status = -1
-            break
-        elif file.endswith('.R2.fastq.gz'):
-            paired_end = True
-            nends_status = 2
-            break # dataset is paired-end
-
-    # Check to see if both mates (R1 and R2) 
-    # are present paired-end data
-    if paired_end:
-        nends = {} # keep count of R1 and R2 for each sample
-        for file in ifiles:
-            # Split sample name on file extension
-            sample = re.split('\.R[12]\.fastq\.gz', os.path.basename(file))[0]
-            if sample not in nends:
-                nends[sample] = 0
-
-            nends[sample] += 1
-
-        # Check if samples contain both read mates
-        missing_mates = [sample for sample, count in nends.items() if count == 1]
-        if missing_mates:
-            # Missing an R1 or R2 for a provided input sample
-            raise NameError("""\n\tFatal: Detected pair-end data but user failed to provide
-                both mates (R1 and R2) for the following samples:\n\t\t{}\n
-                Please check that the basename for each sample is consistent across mates.
-                Here is an example of a consistent basename across mates:
-                  consistent_basename.R1.fastq.gz
-                  consistent_basename.R2.fastq.gz
-
-                Please do not run the pipeline with a mixture of single-end and paired-end
-                samples. This feature is currently not supported within {}, and it is
-                not recommended either. If this is a priority for your project, please run
-                paired-end samples and single-end samples separately (in two separate output 
-                directories). If you feel like this functionality should exist, feel free to 
-                open an issue on Github.
-                """.format(missing_mates, sys.argv[0])
-            )
-    elif not bam_files:
-        # Provided only single-end data
-        # not supported or recommended
-        raise TypeError("""\n\tFatal: Single-end data detected.
-            {} does not support single-end data. Calling variants from single-end
-            data is not recommended either. If you feel like this functionality should 
-            exist, feel free to open an issue on Github.
-            """.format(sys.argv[0])
-        )
-
-    return nends_status
 
 
 def get_rawdata_bind_paths(input_files):

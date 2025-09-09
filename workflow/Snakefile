@@ -1,4 +1,4 @@
-# Python standard library
+#!/usr/bin/env python3
 import json
 from glob import glob
 from os.path import join
@@ -10,105 +10,91 @@ from scripts.common import (
     allocated,
     provided, 
     references,
-    str_bool
+    str_bool,
+    get_sid
 )
 
 
 configfile: "config.yaml"
 
-# Get list of BAM files from the specified directory
-bam_dir = config.get("bam_dir", "bams")
-SAMPLES = [Path(f).stem for f in glob(f"{bam_dir}/*.bam")]
+# project configuration options
+samples                         = config["samples"]
+genome                          = config['options']['genome_alias']
+genome_files                    = config["references"][genome]
+ref2bit                         = 'ref2bit' in genome_files
+intervals                       = 'intervals' in genome_files
+chrom_sizes                     = 'chrom_sizes' in genome_files
+tss                             = 'tss' in genome_files
+tss_interval                    = 'tss_interval' in genome_files
+split_interval                  = int(config['options']['interval'])
+max_fragment_len                = int(config['options']['max'])
+min_fragment_len                = int(config['options']['min'])
+bin_size                        = int(config['options']['bin_size'])
 
-# Validate SAMPLES
-if not SAMPLES:
-    raise ValueError(f"No BAM files found in {bam_dir}")
-
-# Select genome-specific parameters
-GENOME = config["genome"]
-if GENOME not in config:
-    raise ValueError(f"Genome {GENOME} not defined in config.yaml")
-GENOME_PARAMS = config[GENOME]
+# directories
+data_dir                         = config["project"]["datapath"]
+all_input_files                  = config['options']['input']
+output_dir                       = config['options']['output']
+bin_dir                          = config['binpath']
+bam_dir                          = os.path.join(output_dir, 'bams')
+coverage_dir                     = os.path.join(output_dir, 'coverage')
+fragment_length_dir              = os.path.join(output_dir, 'frag_length_bins')
+fragment_length_int_dir          = os.path.join(output_dir, 'frag_length_intervals')
+end_motifs_dir                   = os.path.join(output_dir, 'end_motifs')
+interval_end_motifs_dir          = os.path.join(output_dir, 'interval_end_motifs')
+mds_dir                          = os.path.join(output_dir, 'mds')
+delfi_dir                        = os.path.join(output_dir, 'delfi')
+wps_dir                          = os.path.join(output_dir, 'wps')
+adjust_wps_dir                   = os.path.join(output_dir, 'adjust_wps')
+cleavage_profile_dir             = os.path.join(output_dir, 'cleavage_profile')
 
 # Define outputs
-outputs = []
+all_outputs = []
 
-# Coverage
-if GENOME_PARAMS.get("intervals"):
-    outputs.extend(expand("coverage/{sample}_coverage.bed", sample=SAMPLES))
-else:
-    print("Warning: Skipping coverage rule due to missing intervals")
-
+# Bam starting point (convert any sam/cram)
 # Fragment length bins
-outputs.extend(expand("frag_length_bins/{sample}_frag_bin{bin_size}.tsv", sample=SAMPLES, bin_size=[config['bin_size']]))
+all_outputs.extend(
+    expand(os.path.join(bam_dir, "{sample}.sorted.bam"), sample=samples)
+)
 
-# Fragment length intervals
-if GENOME_PARAMS.get("intervals"):
-    outputs.extend(expand("frag_length_intervals/{sample}_frag_interval.bed", sample=SAMPLES))
-else:
-    print("Warning: Skipping frag_length_intervals rule due to missing intervals")
+all_outputs.extend(
+    expand(
+        os.path.join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"), 
+        sample=samples, 
+        bin_size=[bin_size]
+    )
+)
 
-# End motifs
-if GENOME_PARAMS.get("ref2bit"):
-    outputs.extend(expand("end_motifs/{sample}_endmotif.tsv", sample=SAMPLES))
-else:
-    print("Warning: Skipping end_motifs rule due to missing ref2bit")
+if split_interval:
+    all_outputs.extend(
+        expand(
+            os.path.join(fragment_length_int_dir, "{sample}_frag_interval.bed"),
+            sample=samples
+        )
+    )
 
-# Interval end motifs
-if GENOME_PARAMS.get("ref2bit") and GENOME_PARAMS.get("intervals"):
-    outputs.extend(expand("interval_end_motifs/{sample}_endmotif_interval.tsv", sample=SAMPLES))
-else:
-    print("Warning: Skipping interval_end_motifs rule due to missing ref2bit or intervals")
+if ref2bit:
+    all_outputs.extend(expand(os.path.join(end_motifs_dir, "{sample}_endmotif.tsv"), sample=samples))
+    all_outputs.extend(expand(os.path.join(mds_dir, "{sample}_mds.tsv"), sample=samples))
+    if intervals:
+        all_outputs.extend(expand(os.path.join(interval_end_motifs_dir, "{sample}_endmotif_interval.tsv"), sample=samples))
+        if chrom_sizes:
+            all_outputs.extend(expand(os.path.join(delfi_dir, "{sample}_delfi.bed"), sample=samples))
 
-# MDS
-if GENOME_PARAMS.get("ref2bit"):
-    outputs.extend(expand("mds/{sample}_mds.tsv", sample=SAMPLES))
-else:
-    print("Warning: Skipping mds rule due to missing ref2bit")
-
-# DELFI
-if GENOME_PARAMS.get("chrom_sizes") and GENOME_PARAMS.get("ref2bit") and GENOME_PARAMS.get("intervals"):
-    outputs.extend(expand("delfi/{sample}_delfi.bed", sample=SAMPLES))
-else:
-    print("Warning: Skipping delfi rule due to missing chrom_sizes, ref2bit, or intervals")
-
-# WPS
-if GENOME_PARAMS.get("tss"):
-    outputs.extend(expand("wps/{sample}_wps_out_tss.bw", sample=SAMPLES))
-else:
-    print("Warning: Skipping wps rule due to missing tss")
-
-# Adjusted WPS
-if GENOME_PARAMS.get("tss") and GENOME_PARAMS.get("chrom_sizes") and GENOME_PARAMS.get("tss_interval"):
-    outputs.extend(expand("adjust_wps/{sample}_wps_out_tss_adjusted.bw", sample=SAMPLES))
-else:
-    print("Warning: Skipping adjust_wps rule due to missing tss, chrom_sizes, or tss_interval")
-
-# Cleavage profile
-if GENOME_PARAMS.get("tss") and GENOME_PARAMS.get("chrom_sizes") and GENOME_PARAMS.get("tss_interval"):
-    outputs.extend(expand("cleavage_profile/{sample}_cleavage_profile_tss.bw", sample=SAMPLES))
-else:
-    print("Warning: Skipping cleavage_profile rule due to missing tss, chrom_sizes, or tss_interval")
-
-# Aggregation rules
-if GENOME_PARAMS.get("tss_interval"):
-    if GENOME_PARAMS.get("tss"):
-        outputs.extend(expand("wps/{sample}_wps_out_tss_aggr.wig", sample=SAMPLES))
-    else:
-        print("Warning: Skipping agg_wps rule due to missing tss")
-    if GENOME_PARAMS.get("tss") and GENOME_PARAMS.get("chrom_sizes") and GENOME_PARAMS.get("tss_interval"):
-        outputs.extend(expand("adjust_wps/{sample}_wps_out_tss_adj_aggr.wig", sample=SAMPLES))
-    else:
-        print("Warning: Skipping agg_adjust_wps rule due to missing tss, chrom_sizes, or tss_interval")
-    if GENOME_PARAMS.get("tss") and GENOME_PARAMS.get("chrom_sizes") and GENOME_PARAMS.get("tss_interval"):
-        outputs.extend(expand("cleavage_profile/{sample}_cleavage_profile_aggr.wig", sample=SAMPLES))
-    else:
-        print("Warning: Skipping agg_cleavage_profile rule due to missing tss, chrom_sizes, or tss_interval")
+if tss:
+    all_outputs.extend(expand(os.path.join(wps_dir, "{sample}_wps_out_tss.bw"), sample=samples))
+    if tss_interval:
+        all_outputs.extend(expand(os.path.join(wps_dir, "{sample}_wps_out_tss_aggr.wig"), sample=samples))
+    if chrom_sizes and tss_interval:
+        all_outputs.extend(expand(os.path.join(adjust_wps_dir, "{sample}_wps_out_tss_adjusted.bw"), sample=samples))
+        all_outputs.extend(expand(os.path.join(cleavage_profile_dir, "{sample}_cleavage_profile_tss.bw"), sample=samples))
+        all_outputs.extend(expand(os.path.join(adjust_wps_dir, "{sample}_wps_out_tss_adj_aggr.wig"), sample=samples))
+        all_outputs.extend(expand(os.path.join(cleavage_profile_dir, "{sample}_cleavage_profile_aggr.wig"), sample=samples))
 
 
 rule all:
     input:
-        outputs
+        all_outputs
 
 
 # Import rules 

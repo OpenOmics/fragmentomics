@@ -202,3 +202,8 @@ def joint_option(prefix, valueslist):
         s += "{} {} ".format(prefix, v)
     s = s.rstrip()
     return s
+
+
+def get_sid(fn):
+    import re
+    return re.split('\.(?:sorted\.)?(?i)(?:bam|sam|cram)', fn)[0]

@@ -1,4 +1,22 @@
 {
     "references": {
+        "hg19": {
+            "chrom_sizes": "/data/OpenOmics/references/fragmentomics/hg19.chrom.sizes",
+            "intervals": "/data/OpenOmics/references/fragmentomics/hg19_5kb_intervals.bed",
+            "ref2bit": "/data/OpenOmics/references/fragmentomics/hg19.2bit",
+            "gap": "/data/OpenOmics/references/fragmentomics/hg19.gap.bed",
+            "tss": "/data/OpenOmics/references/fragmentomics/tss.hg19_sorted.bed",
+            "tss_interval": "/data/OpenOmics/references/fragmentomics/tss.hg19_interval_sorted.bed",
+            "blacklist": "/data/OpenOmics/references/fragmentomics/hg19-blacklist.bed"
+        },
+        "hg38": {
+            "chrom_sizes": "/data/OpenOmics/references/fragmentomics/hg38.chrom.sizes",
+            "intervals": "/data/OpenOmics/references/fragmentomics/hg38_5kb_intervals.bed",
+            "ref2bit": "/data/OpenOmics/references/fragmentomics/hg38.2bit",
+            "gap": "/data/OpenOmics/references/fragmentomics/hg38.gap.bed",
+            "tss": "/data/OpenOmics/references/fragmentomics/tss.hg38_sorted.bed",
+            "tss_interval": "/data/OpenOmics/references/fragmentomics/tss.hg38_interval_sorted.bed",
+            "blacklist": "/data/OpenOmics/references/fragmentomics/hg38-blacklist.bed"
+        }
     }
 }

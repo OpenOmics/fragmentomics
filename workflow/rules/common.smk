@@ -1,315 +1,392 @@
-from scripts.common import abstract_location
+import os
+from textwrap import dedent
+
+
+# configuration
+split_interval                  = int(config['options']['interval'])
+max_fragment_len                = int(config['options']['max'])
+min_fragment_len                = int(config['options']['min'])
+right_flank                     = int(config['options']['right'])
+left_flank                      = int(config['options']['left'])
+bin_size                        = int(config['options']['bin_size'])
+sample_stems                    = config['samples']
+
+
+# genome linked artifacts
+genome_files                    = config["references"][genome]
+chrom_sizes                     = genome_files["chrom_sizes"]
+ref2bit                         = genome_files["ref2bit"]
+intervals                       = genome_files["intervals"]
+tss                             = genome_files['tss']
+tss_interval                    = genome_files['tss_interval']
+gap                             = genome_files.get("gap", None)
+blacklist                       = genome_files.get("blacklist", None)
+
+
+# directories
+data_dir                         = config["project"]["datapath"]
+all_input_files                  = config['options']['input']
+output_dir                       = config['options']['output']
+bin_dir                          = config['binpath']
+bam_dir                          = os.path.join(output_dir, 'bams')
+coverage_dir                     = os.path.join(output_dir, 'coverage')
+fragment_length_dir              = os.path.join(output_dir, 'frag_length_bins')
+fragment_length_int_dir          = os.path.join(output_dir, 'frag_length_intervals')
+end_motifs_dir                   = os.path.join(output_dir, 'end_motifs')
+interval_end_motifs_dir          = os.path.join(output_dir, 'interval_end_motifs')
+mds_dir                          = os.path.join(output_dir, 'mds')
+delfi_dir                        = os.path.join(output_dir, 'delfi')
+wps_dir                          = os.path.join(output_dir, 'wps')
+adjust_wps_dir                   = os.path.join(output_dir, 'adjust_wps')
+cleavage_profile_dir             = os.path.join(output_dir, 'cleavage_profile')
+
+
+# default resources
+default_threads                  = config['cluster']['__default__']['threads']
+
+
+rule stage_bams:
+    input:
+        all_input_files
+    output:
+        expand(os.path.join(bam_dir, "{sample}.sorted.bam"), sample=sample_stems)
+    params:
+        bam_dir                  = bam_dir,
+        python_script            = os.path.join(bin_dir, 'stage_input_files.py'),
+        memory                   = str(config["cluster"]["stage_bams"].get("mem", default_threads)).replace('G' ,'')
+    threads: 
+        config["cluster"]["stage_bams"].get("threads", default_threads)
+    container: 
+        config['images']['finaletoolkit']
+    shell:
+        dedent("""
+        python {params.python_script} \\
+            --files {input} \\
+            --output {params.bam_dir} \\
+            --threads {threads} \\
+            --memory {params.memory}
+        """)
 
 
 rule coverage:
     input:
-        
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        intervals               = GENOME_PARAMS["intervals"]
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bed                     = "coverage/{sample}_coverage.bed"
+        bed                     = os.path.join(coverage_dir, "{sid}_coverage.bed")
     threads: 
-        config["resources"]["coverage"]["threads"]
-    resources:
-        rname                   = "preseq",
-        mem                     = config["resources"]["coverage"]["mem"],
-        time                    = config["resources"]["coverage"]["time"],
-        partition               = config["resources"]["coverage"]["partition"]
+        config["cluster"]["coverage"].get("threads", default_threads)
     params:
         rname                   = "coverage",
-        min_len                 = config["min"],
-        max_len                 = config["max"]
-    log:
-        "logs/coverage/{sample}.log"
+        intervals               = split_interval,
+        min_len                 = min_fragment_len,
+        max_len                 = max_fragment_len
+    container: 
+        config['images']['finaletoolkit']
     shell:
-        """
-        mkdir -p coverage logs/coverage
-        finaletoolkit coverage {input.bam} {input.intervals} -n --scale 1e6 -q 30 -min {params.min_len} -max {params.max_len} -p any -o {output.bed} -w {threads} -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            coverage {input.bam} {input.intervals} \\
+            -n \\
+            --scale 1e6 \\
+            -q 30 \\
+            -min {params.min_len} \\
+            -max {params.max_len} \\
+            -p any \\
+            -o {output.bed} \\
+            -w {threads} \\
+            -v
+        """)
 
 
 rule frag_length_bins:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam"
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        tsv                     = "frag_length_bins/{sample}_frag_bin{bin_size}.tsv"
-    threads: 
-        config["resources"]["frag_length_bins"]["threads"]
-    resources:
-        rname                   = "frag_length_bins",
-        mem                     = config["resources"]["frag_length_bins"]["mem"],
-        time                    = config["resources"]["frag_length_bins"]["time"],
-        partition               = config["resources"]["frag_length_bins"]["partition"]
-    wildcard_constraints:
-        bin_size                = "\d+"
+        tsv                     = os.path.join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".tsv"),
+        png                     = os.path.join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".png")
+    threads:
+        config["cluster"]["frag_length_bins"].get("threads", default_threads)
     params:
-        bin_size                = config["bin_size"],
-        min_len                 = config["min"],
-        max_len                 = config["max"],
-        png                     = "frag_length_bins/{sample}_frag_bin{bin_size}.png"
-    log:
-        "logs/frag_length_bins/{sample}_bin{bin_size}.log"
+        rname                   = "frag_length_bins",
+        bin_size                = str(bin_size),
+        min_len                 = str(min_fragment_len),
+        max_len                 = str(max_fragment_len),
+    container: 
+        config['images']['finaletoolkit']
     shell:
-        """
-        mkdir -p frag_length_bins logs/frag_length_bins
-        finaletoolkit frag-length-bins {input.bam} -q 30 --bin-size {params.bin_size} -min {params.min_len} -max {params.max_len} -p midpoint -o {output.tsv} --histogram-path {params.png} -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            frag-length-bins {input.bam} \\
+            -q 30 \\
+            --bin-size {params.bin_size} \\
+            -min {params.min_len} \\
+            -max {params.max_len} \\
+            -p midpoint \\
+            -o {output.tsv} \\
+            --histogram-path {output.png} \\
+            -v
+        """)
 
 
 rule frag_length_intervals:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        intervals               = GENOME_PARAMS["intervals"]
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bed                     = "frag_length_intervals/{sample}_frag_interval.bed"
-    threads: 
-        config["resources"]["frag_length_intervals"]["threads"]
-    resources:
-        rname                   = "frag_length_intervals",
-        mem                     = config["resources"]["frag_length_intervals"]["mem"],
-        time                    = config["resources"]["frag_length_intervals"]["time"],
-        partition               = config["resources"]["frag_length_intervals"]["partition"]
+        bed                     = os.path.join(fragment_length_int_dir, "{sid}_frag_interval.bed")
+    threads:
+        config["cluster"]["frag_length_intervals"].get("threads", default_threads)
     params:
-        min_len                 = config["min"],
-        max_len                 = config["max"]
-    log:
-        "logs/frag_length_intervals/{sample}.log"
+        rname                   = "frag_length_intervals",
+        min_len                 = min_fragment_len,
+        max_len                 = max_fragment_len,
+        intervals               = split_interval
+    container: 
+        config['images']['finaletoolkit']
     shell:
-        """
-        mkdir -p frag_length_intervals logs/frag_length_intervals
-        finaletoolkit frag-length-intervals {input.bam} {input.intervals} -q 30 -min {params.min_len} -max {params.max_len} -p any -o {output.bed} -w {threads} -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            frag-length-intervals {input.bam} {params.intervals} \\
+            -q 30 \\
+            -min {params.min_len} \\
+            -max {params.max_len} \\
+            -p any \\
+            -o {output.bed} \\
+            -w {threads} \\
+            -v
+        """)
 
 
 rule end_motifs:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        ref2bit                 = GENOME_PARAMS["ref2bit"]
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        tsv                     = "end_motifs/{sample}_endmotif.tsv"
+        tsv                     = os.path.join(end_motifs_dir, "{sid}_endmotif.tsv"),
     threads: 
-        config["resources"]["end_motifs"]["threads"]
-    resources:
-        mem                     = config["resources"]["end_motifs"]["mem"],
-        time                    = config["resources"]["end_motifs"]["time"],
-        partition               = config["resources"]["end_motifs"]["partition"]
+        config["cluster"]["end_motifs"].get("threads", default_threads)
+    container: 
+        config['images']['finaletoolkit']
     params:
-        min_len                 = config["min"],
-        max_len                 = config["max"]
-    log:
-        "logs/end_motifs/{sample}.log"
+        min_len                 = min_fragment_len,
+        max_len                 = max_fragment_len,
+        ref2bit                 = ref2bit,
     shell:
-        """
-        mkdir -p end_motifs logs/end_motifs
-        finaletoolkit end-motifs {input.bam} {input.ref2bit} -q 30 -k 4 -min {params.min_len} -max {params.max_len} -o {output.tsv} -w {threads} -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            end-motifs {input.bam} {params.ref2bit} \\
+            -q 30 \\
+            -k 4 \\
+            -min {params.min_len} \\
+            -max {params.max_len} \\
+            -o {output.tsv} \\
+            -w {threads} \\
+            -v
+        """)
 
 
 rule interval_end_motifs:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        ref2bit                 = GENOME_PARAMS["ref2bit"],
-        intervals               = GENOME_PARAMS["intervals"]
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        tsv                     = "interval_end_motifs/{sample}_endmotif_interval.tsv"
-    threads: 
-        config["resources"]["interval_end_motifs"]["threads"]
-    resources:
-        mem                     = config["resources"]["interval_end_motifs"]["mem"],
-        time                    = config["resources"]["interval_end_motifs"]["time"],
-        partition               = config["resources"]["interval_end_motifs"]["partition"]
+        tsv                     = os.path.join(interval_end_motifs_dir, "{sid}_endmotif_interval.tsv"),
+    container: 
+        config['images']['finaletoolkit']
+    threads:
+        config["cluster"]["interval_end_motifs"].get("threads", default_threads)
     params:
-        min_len                 = config["min"],
-        max_len                 = config["max"]
-    log:
-        "logs/interval_end_motifs/{sample}.log"
+        ref2bit                 = ref2bit,
+        intervals               = intervals,
+        min_len                 = min_fragment_len,
+        max_len                 = max_fragment_len
     shell:
-        """
-        mkdir -p interval_end_motifs logs/interval_end_motifs
-        finaletoolkit interval-end-motifs {input.bam} {input.ref2bit} {input.intervals} -q 30 -k 4 -min {params.min_len} -max {params.max_len} -o {output.tsv} -w {threads} -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            interval-end-motifs {input.bam} {params.ref2bit} {params.intervals} \\
+            -q 30 \\
+            -k 4 \\
+            -min {params.min_len} \\
+            -max {params.max_len} \\
+            -o {output.tsv} \\
+            -w {threads} \\
+            -v
+        """)
 
 
 rule mds:
     input:
-        endmotif                = "end_motifs/{sample}_endmotif.tsv"
+        endmotif                = os.path.join(end_motifs_dir, "{sid}_endmotif.tsv"),
     output:
-        tsv                     = "mds/{sample}_mds.tsv"
-    threads: 
-        config["resources"]["mds"]["threads"]
-    resources:
-        mem                     = config["resources"]["mds"]["mem"],
-        time                    = config["resources"]["mds"]["time"],
-        partition               = config["resources"]["mds"]["partition"]
+        tsv                     = os.path.join(mds_dir, "{sid}_mds.tsv"),
+    container: 
+        config['images']['finaletoolkit']
+    threads:
+        config["cluster"]["mds"].get("threads", default_threads)
     params:
-        sample                  = "{sample}"
-    log:
-        "logs/mds/{sample}.log"
+        sid                     = "{sid}"
     shell:
-        """
-        mkdir -p mds logs/mds
-        mds_score=$(finaletoolkit mds {input.endmotif} 2> {log})
-        echo "{params.sample}\t${{mds_score}}" > {output.tsv}
-        """
+        dedent("""
+        mds_score=$(finaletoolkit mds {input.endmotif})
+        echo "Sample\tMDS_score" > {output.tsv}
+        echo "{params.sid}\t${{mds_score}}" > {output.tsv}
+        """)
 
 
 rule delfi:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        chrom_sizes             = GENOME_PARAMS["chrom_sizes"],
-        ref2bit                 = GENOME_PARAMS["ref2bit"],
-        intervals               = GENOME_PARAMS["intervals"],
-        blacklist               = GENOME_PARAMS["blacklist"] if GENOME_PARAMS.get("blacklist") else "",
-        gap                     = GENOME_PARAMS["gap"] if GENOME_PARAMS.get("gap") else ""
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bed                     = "delfi/{sample}_delfi.bed"
-    threads: 
-        config["resources"]["delfi"]["threads"]
-    resources:
-        mem                     = config["resources"]["delfi"]["mem"],
-        time                    = config["resources"]["delfi"]["time"],
-        partition               = config["resources"]["delfi"]["partition"]
+        bed                     = os.path.join(delfi_dir, "{sid}_delfi.bed"),
+    threads:
+        config["cluster"]["delfi"].get("threads", default_threads)
     params:
-        blacklist_cmd           = lambda wildcards, input: f"--blacklist-file {input.blacklist}" if input.blacklist else "",
-        gap_cmd                 = lambda wildcards, input: f"-g {input.gap}" if input.gap else ""
-    log:
-        "logs/delfi/{sample}.log"
+        chrom_sizes             = chrom_sizes,
+        ref2bit                 = ref2bit,
+        intervals               = intervals,
+        blacklist_cmd           = f"--blacklist-file {blacklist} \\\n\t" if blacklist else "",
+        gap_cmd                 = f"-g {gap} \\\n\t" if gap else ""
     shell:
         """
-        mkdir -p delfi logs/delfi
-        finaletoolkit delfi {input.bam} {input.chrom_sizes} {input.ref2bit} {input.intervals} -q 30 -o {output.bed} -w {threads} -v --no-merge-bins {params.blacklist_cmd} {params.gap_cmd} > {log} 2>&1
+        finaletoolkit \\
+            delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {params.intervals} \\
+            -q 30 \\
+            -o {output.bed} \\
+            -w {threads} \\ 
+            -v \\
+            --no-merge-bins \\
+            {params.blacklist_cmd} {params.gap_cmd}
         """
 
 
 rule wps:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        tss                     = GENOME_PARAMS["tss"]
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bw                      = "wps/{sample}_wps_out_tss.bw"
+        bw                      = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
     threads: 
-        config["resources"]["wps"]["threads"]
-    resources:
-        mem                     = config["resources"]["wps"]["mem"],
-        time                    = config["resources"]["wps"]["time"],
-        partition               = config["resources"]["wps"]["partition"]
+        config["cluster"]["wps"].get("threads", default_threads)
     params:
-        i                       = config["i"]
-    log:
-        "logs/wps/{sample}.log"
+        intervals               = intervals,
+        tss                     = tss
     shell:
         """
-        mkdir -p wps logs/wps
-        finaletoolkit wps {input.bam} {input.tss} -i {params.i} -W 120 -min 120 -max 180 -q 30 -o {output.bw} -w {threads} -v > {log} 2>&1
+        finaletoolkit \\
+            wps {input.bam} {params.tss} \\
+            -i {params.intervals} \\
+            -W 120 \\
+            -min 120 \\
+            -max 180 \\
+            -q 30 \\
+            -o {output.bw} \\
+            -w {threads} \\
+            -v
         """
 
 
 rule adjust_wps:
     input:
-        wps_bw                  = "wps/{sample}_wps_out_tss.bw",
-        tss_interval            = GENOME_PARAMS["tss_interval"],
-        chrom_sizes             = GENOME_PARAMS["chrom_sizes"]
+        wps_bw                  = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
     output:
-        bw                      = "adjust_wps/{sample}_wps_out_tss_adjusted.bw"
+        bw                      = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
     threads: 
-        config["resources"]["adjust_wps"]["threads"]
-    resources:
-        mem                     = config["resources"]["adjust_wps"]["mem"],
-        time                    = config["resources"]["adjust_wps"]["time"],
-        partition               = config["resources"]["adjust_wps"]["partition"]
+        config["cluster"]["adjust_wps"].get("threads", default_threads)
     params:
-        i                       = config["i"]
-    log:
-        "logs/adjust_wps/{sample}.log"
+        intervals               = intervals,
+        tss_interval            = tss_interval,
+        chrom_sizes             = chrom_sizes
     shell:
         """
-        mkdir -p adjust_wps logs/adjust_wps
-        finaletoolkit adjust-wps {input.wps_bw} {input.tss_interval} {input.chrom_sizes} -o {output.bw} -i {params.i} -m 200 -S --subtract-edges -w {threads} -v > {log} 2>&1
+        finaletoolkit \\
+            adjust-wps {input.wps_bw} {params.tss_interval} {params.chrom_sizes} \\
+            -o {output.bw} \\
+            -i {params.intervals} \\
+            -m 200 \\
+            -S \\
+            --subtract-edges \\
+            -w {threads} \\
+            -v
         """
 
 
 rule cleavage_profile:
     input:
-        bam                     = lambda wildcards: f"{bam_dir}/{wildcards.sample}.bam",
-        tss                     = GENOME_PARAMS["tss"],
-        chrom_sizes             = GENOME_PARAMS["chrom_sizes"]
+        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bw                      = "cleavage_profile/{sample}_cleavage_profile_tss.bw"
-    threads: 
-        config["resources"]["cleavage_profile"]["threads"]
-    resources:
-        mem                     = config["resources"]["cleavage_profile"]["mem"],
-        time                    = config["resources"]["cleavage_profile"]["time"],
-        partition               = config["resources"]["cleavage_profile"]["partition"]
+        bw                      = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw")
+    threads:
+        config["cluster"]["cleavage_profile"].get("threads", default_threads)
     params:
-        l                       = config["l"],
-        r                       = config["r"],
-        min_len                 = config["min"],
-        max_len                 = config["max"]
-    log:
-        "logs/cleavage_profile/{sample}.log"
+        l                       = left_flank,
+        r                       = right_flank,
+        min_len                 = min_fragment_len,
+        max_len                 = max_fragment_len,
+        tss                     = tss,
+        chrom_sizes             = chrom_sizes
     shell:
         """
-        mkdir -p cleavage_profile logs/cleavage_profile
-        finaletoolkit cleavage-profile {input.bam} {input.tss} -o {output.bw} -c {input.chrom_sizes} -l {params.l} -r {params.r} -q 30 -min {params.min_len} -max {params.max_len} -w {threads} -v > {log} 2>&1
+        finaletoolkit \\
+            cleavage-profile {input.bam} {params.tss} \\
+            -o {output.bw} \\
+            -c {params.chrom_sizes} \\
+            -l {params.l} \\
+            -r {params.r} \\
+            -q 30 \\
+            -min {params.min_len} \\
+            -max {params.max_len} \\
+            -w {threads} \\
+            -v
         """
+
 
 rule agg_wps:
     input:
-        bw                      = "wps/{sample}_wps_out_tss.bw",
-        tss_interval            = GENOME_PARAMS["tss_interval"]
+        bw                      = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
     output:
-        wig                     = "wps/{sample}_wps_out_tss_aggr.wig"
+        wig                     = os.path.join(wps_dir, "{sid}_wps_out_tss_aggr.wig")
     threads: 
-        config["resources"]["agg_wps"]["threads"]
-    resources:
-        mem                     = config["resources"]["agg_wps"]["mem"],
-        time                    = config["resources"]["agg_wps"]["time"],
-        partition               = config["resources"]["agg_wps"]["partition"]
-    log:
-        "logs/agg_wps/{sample}.log"
+        config["cluster"]["agg_wps"].get("threads", default_threads)
+    params:
+        tss_interval            = tss_interval
     shell:
-        """
-        mkdir -p logs/agg_wps
-        finaletoolkit agg-bw {input.bw} {input.tss_interval} -o {output.wig} --mean -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            agg-bw {input.bw} {params.tss_interval} \\
+            -o {output.wig} \\
+            --mean \\
+            -v
+        """)
 
 rule agg_adjust_wps:
     input:
-        bw                      = "adjust_wps/{sample}_wps_out_tss_adjusted.bw",
-        tss_interval            = GENOME_PARAMS["tss_interval"]
+        bw                      = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
     output:
-        wig                     = "adjust_wps/{sample}_wps_out_tss_adj_aggr.wig"
-    threads: 
-        config["resources"]["agg_adjust_wps"]["threads"]
-    resources:
-        mem                     = config["resources"]["agg_adjust_wps"]["mem"],
-        time                    = config["resources"]["agg_adjust_wps"]["time"],
-        partition               = config["resources"]["agg_adjust_wps"]["partition"]
-    log:
-        "logs/agg_adjust_wps/{sample}.log"
+        wig                     = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adj_aggr.wig")
+    threads:
+        config["cluster"]["agg_adjust_wps"].get("threads", default_threads)
+    params:
+        tss_interval            = tss_interval
     shell:
-        """
-        mkdir -p logs/agg_adjust_wps
-        finaletoolkit agg-bw {input.bw} {input.tss_interval} -o {output.wig} --mean -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            agg-bw {input.bw} {params.tss_interval} \\
+            -o {output.wig} \\
+            --mean \\
+            -v
+        """)
+
 
 rule agg_cleavage_profile:
     input:
-        bw                      = "cleavage_profile/{sample}_cleavage_profile_tss.bw",
-        tss_interval            = GENOME_PARAMS["tss_interval"]
+        bw                      = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw"),
     output:
-        wig                     = "cleavage_profile/{sample}_cleavage_profile_aggr.wig"
-    threads: 
-        config["resources"]["agg_cleavage_profile"]["threads"]
-    resources:
-        mem                     = config["resources"]["agg_cleavage_profile"]["mem"],
-        time                    = config["resources"]["agg_cleavage_profile"]["time"],
-        partition               = config["resources"]["agg_cleavage_profile"]["partition"]
-    log:
-        "logs/agg_cleavage_profile/{sample}.log"
+        wig                     = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_aggr.wig"),
+    threads:
+        config["cluster"]["agg_cleavage_profile"].get("threads", default_threads)
+    params:
+        tss_interval            = tss_interval     
     shell:
-        """
-        mkdir -p logs/agg_cleavage_profile
-        finaletoolkit agg-bw {input.bw} {input.tss_interval} -o {output.wig} --mean -v > {log} 2>&1
-        """
+        dedent("""
+        finaletoolkit \\
+            agg-bw {input.bw} {params.tss_interval} \\
+            -o {output.wig} \\
+            --mean \\
+            -v
+        """)

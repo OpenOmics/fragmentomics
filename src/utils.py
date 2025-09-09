@@ -358,6 +358,37 @@ def hashed(l):
     return h
 
 
+def common_parent_directory(paths):
+    """
+    Finds the common parent directory among a list of paths.
+    
+    Args:
+        paths (list): A list of strings, where each string is a file or directory path.
+
+    Returns:
+        str: The common parent directory, or an empty string if no common parent is found.
+    """
+    if not paths: return None
+
+    # Normalize paths and split into components
+    normalized_paths = [os.path.normpath(p) for p in paths]
+    path_components = [p.split(os.path.sep) for p in normalized_paths]
+
+    # Find the minimum length among all path component lists
+    min_len = min(len(components) for components in path_components)
+
+    common_prefix = []
+    for i in range(min_len):
+        # Check if the component at the current index is common to all paths
+        current_component = path_components[0][i]
+        if all(components[i] == current_component for components in path_components):
+            common_prefix.append(current_component)
+        else:
+            break  # Stop if a difference is found
+
+    return os.path.join(*common_prefix)
+
+
 if __name__ == '__main__':
     # Calculate MD5 checksum of entire file 
     print('{}  {}'.format(md5sum(sys.argv[0]), sys.argv[0]))

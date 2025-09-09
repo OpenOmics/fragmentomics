@@ -14,3 +14,5 @@ try:
 except IOError:
     # When namespace is __main__
     version = open(os.path.join(here, '..', 'VERSION'), 'r').readlines()[0].strip()
+
+__pipeline__ = 'fragmentomics'
