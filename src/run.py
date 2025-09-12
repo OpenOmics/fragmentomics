@@ -143,10 +143,9 @@ def link_files_to_output(files, output_dir):
     for file in files:
         filename = os.path.basename(file)
         renamed = os.path.join(output_dir, santitize_fn(filename))
-
         if not exists(renamed):
             os.symlink(os.path.abspath(os.path.realpath(file)), renamed)
-            linked_files.append(renamed)
+        linked_files.append(renamed)
     return linked_files
 
 
@@ -226,27 +225,6 @@ def setup(sub_args, ifiles, repo_path, output_path, config_extra=None):
     return config
 
 
-def unpacked(nested_dict):
-    """Generator to recursively retrieves all values in a nested dictionary.
-    @param nested_dict dict[<any>]:
-        Nested dictionary to unpack
-    @yields value in dictionary 
-    """
-    # Iterate over all values of 
-    # given dictionary
-    for value in nested_dict.values():
-        # Check if value is of dict type
-        if isinstance(value, dict):
-            # If value is dict then iterate 
-            # over all its values recursively
-            for v in unpacked(value):
-                yield v
-        else:
-            # If value is not dict type 
-            # then yield the value
-            yield value
-
-
 def get_fastq_screen_paths(fastq_screen_confs, match = 'DATABASE', file_index = -1):
     """Parses fastq_screen.conf files to get the paths of each fastq_screen database.
     This path contains bowtie2 indices for reference genome to screen against.
@@ -270,59 +248,6 @@ def get_fastq_screen_paths(fastq_screen_confs, match = 'DATABASE', file_index = 
     return databases
 
 
-def resolve_additional_bind_paths(search_paths):
-    """Finds additional singularity bind paths from a list of random paths. Paths are
-    indexed with a compostite key containing the first two directories of an absolute
-    file path to avoid issues related to shared names across the /gpfs shared network
-    filesystem. For each indexed list of file paths, a common path is found. Assumes
-    that the paths provided are absolute paths, the build sub command creates reference
-    files with absolute filenames.
-    @param search_paths list[<str>]:
-        List of absolute file paths to find common bind paths from
-    @return common_paths list[<str>]:
-        Returns a list of common shared file paths to create additional singularity bind paths
-    """
-    common_paths = []
-    indexed_paths = {}
-
-    for ref in search_paths:
-        # Skip over resources with remote URI and
-        # skip over strings that are not file PATHS as
-        # build command creates absolute resource PATHS
-        if ref.lower().startswith('sftp://') or \
-        ref.lower().startswith('s3://') or \
-        ref.lower().startswith('gs://') or \
-        not ref.lower().startswith(os.sep):
-            continue
-
-        # Break up path into directory tokens
-        path_list = os.path.abspath(ref).split(os.sep)
-        try: # Create composite index from first two directories
-            # Avoids issues created by shared /gpfs/ PATHS
-            index = path_list[1:3]
-            index = tuple(index)
-        except IndexError:
-            index = path_list[1] # ref startswith /
-        if index not in indexed_paths:
-            indexed_paths[index] = []
-        # Create an INDEX to find common PATHS for each root 
-        # child directory like /scratch or /data. This prevents 
-        # issues when trying to find the common path betweeen 
-        # these two different directories (resolves to /)
-        indexed_paths[index].append(str(os.sep).join(path_list))
-
-    for index, paths in indexed_paths.items():
-        # Find common paths for each path index
-        p = os.path.dirname(os.path.commonprefix(paths))
-        if p == os.sep:
-            # Aviods adding / to bind list when
-            # given /tmp or /scratch as input 
-            p = os.path.commonprefix(paths)
-        common_paths.append(p)
-
-    return list(set(common_paths))
-
-
 def bind(sub_args, config):
     """Resolves bindpaths for singularity/docker images.
     @param sub_args <parser.parse_args() object>:
@@ -333,25 +258,35 @@ def bind(sub_args, config):
         List of singularity/docker bind paths 
     """
     bindpaths = []
-    for value in unpacked(config):
-        if not isinstance(value, str):
-            continue
-        if exists(value):
-            if os.path.isfile(value):
-                value = os.path.dirname(value)
-            if value not in bindpaths:
-                bindpaths.append(value)
-
     # Bind input file paths, working
     # directory, and other reference
     # genome paths
-    rawdata_bind_paths = [os.path.realpath(p) for p in config['project']['datapath'].split(',')]
-    working_directory =  os.path.realpath(config['project']['workpath'])
-    genome_bind_paths = resolve_additional_bind_paths(bindpaths)
-    bindpaths = [working_directory] + rawdata_bind_paths +  genome_bind_paths
-    bindpaths = list(set([p for p in bindpaths if p != os.sep]))
+    rawdata_bind_paths = config['project']['datapath'].split(',')
+    working_directory = config['project']['workpath']
+    genome_resources = os.path.commonpath(config['references'][config['options']['genome_alias']].values())
 
-    return bindpaths
+    bin_directory = config['binpath']
+    bindpaths = [working_directory, bin_directory, genome_resources] + rawdata_bind_paths
+
+    corrected_bind_paths = []
+    targets = []
+    for _path in bindpaths:
+        if _path == os.sep:
+            continue
+        elif ':' in _path:
+            this_target = _path.split(':')[1]
+            if this_target in targets:
+                raise ValueError('Conflicting singularity binds!')
+            targets.append(this_target)
+            corrected_bind_paths.append(_path)
+            continue
+        if os.path.abspath(os.path.realpath(_path)) != _path:
+            bind_str = f'{os.path.abspath(os.path.realpath(_path))}:{_path}:rw'
+            if _path in targets:
+                raise ValueError('Conflicting singularity binds!')
+            corrected_bind_paths.append(bind_str)
+
+    return corrected_bind_paths
 
 
 def mixed_inputs(ifiles):
@@ -508,7 +443,7 @@ def get_rawdata_bind_paths(input_files):
     bindpaths = []
     for file in input_files:
         # Get directory of input file
-        rawdata_src_path = os.path.dirname(os.path.abspath(os.path.realpath(file)))
+        rawdata_src_path = os.path.dirname(os.path.abspath(file))
         if rawdata_src_path not in bindpaths:
             bindpaths.append(rawdata_src_path)
 
@@ -589,8 +524,8 @@ def runner(mode, outdir, alt_cache, logger, additional_bind_paths = None,
     temp = os.path.dirname(tmp_dir.rstrip('/'))
     if temp == os.sep:
         temp = tmp_dir.rstrip('/')
-    if outdir not in additional_bind_paths.split(','):
-        addpaths.append(outdir)
+    # if outdir not in additional_bind_paths.split(','):
+    #     addpaths.append(outdir)
     if temp not in additional_bind_paths.split(','):
         addpaths.append(temp)
     bindpaths = ','.join(addpaths)

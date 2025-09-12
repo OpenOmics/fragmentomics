@@ -28,6 +28,7 @@ data_dir                         = config["project"]["datapath"]
 all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
 bin_dir                          = config['binpath']
+tmpdir                           = config['options']['tmp_dir']
 bam_dir                          = os.path.join(output_dir, 'bams')
 coverage_dir                     = os.path.join(output_dir, 'coverage')
 fragment_length_dir              = os.path.join(output_dir, 'frag_length_bins')
@@ -86,7 +87,7 @@ rule coverage:
     shell:
         dedent("""
         finaletoolkit \\
-            coverage {input.bam} {input.intervals} \\
+            coverage {input.bam} {params.intervals} \\
             -n \\
             --scale 1e6 \\
             -q 30 \\
@@ -140,7 +141,7 @@ rule frag_length_intervals:
         rname                   = "frag_length_intervals",
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
-        intervals               = split_interval
+        intervals               = intervals
     container: 
         config['images']['finaletoolkit']
     shell:
@@ -167,6 +168,7 @@ rule end_motifs:
     container: 
         config['images']['finaletoolkit']
     params:
+        rname                   = "end_motifs",
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
         ref2bit                 = ref2bit,
@@ -194,12 +196,18 @@ rule interval_end_motifs:
     threads:
         config["cluster"]["interval_end_motifs"].get("threads", default_threads)
     params:
+        rname                   = "interval_end_motifs",
         ref2bit                 = ref2bit,
         intervals               = intervals,
         min_len                 = min_fragment_len,
-        max_len                 = max_fragment_len
+        max_len                 = max_fragment_len,
+        tmpdir                  = tmpdir
     shell:
         dedent("""
+        if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+        tmp=$(mktemp -d -p \"{params.tmpdir}\")
+        trap 'ls -al ${{tmp}}; rm -rf "${{tmp}}"' EXIT
+
         finaletoolkit \\
             interval-end-motifs {input.bam} {params.ref2bit} {params.intervals} \\
             -q 30 \\
@@ -222,6 +230,7 @@ rule mds:
     threads:
         config["cluster"]["mds"].get("threads", default_threads)
     params:
+        rname                   = "mds",
         sid                     = "{sid}"
     shell:
         dedent("""
@@ -239,21 +248,20 @@ rule delfi:
     threads:
         config["cluster"]["delfi"].get("threads", default_threads)
     params:
+        rname                   = "delfi",
         chrom_sizes             = chrom_sizes,
         ref2bit                 = ref2bit,
         intervals               = intervals,
-        blacklist_cmd           = f"--blacklist-file {blacklist} \\\n\t" if blacklist else "",
-        gap_cmd                 = f"-g {gap} \\\n\t" if gap else ""
+        blacklist_cmd           = f"--blacklist-file {blacklist} " if blacklist else "",
+        gap_cmd                 = f"-g {gap}" if gap else ""
     shell:
         """
-        finaletoolkit \\
-            delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {params.intervals} \\
-            -q 30 \\
+        finaletoolkit delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {params.intervals} \\
+            -q 30 {params.blacklist_cmd}{params.gap_cmd} \\
             -o {output.bed} \\
-            -w {threads} \\ 
+            -w {threads} \\
             -v \\
-            --no-merge-bins \\
-            {params.blacklist_cmd} {params.gap_cmd}
+            --no-merge-bins
         """
 
 
@@ -265,7 +273,8 @@ rule wps:
     threads: 
         config["cluster"]["wps"].get("threads", default_threads)
     params:
-        intervals               = intervals,
+        rname                   = "wps",
+        intervals               = split_interval,
         tss                     = tss
     shell:
         """
@@ -290,7 +299,8 @@ rule adjust_wps:
     threads: 
         config["cluster"]["adjust_wps"].get("threads", default_threads)
     params:
-        intervals               = intervals,
+        rname                   = "adjust_wps",
+        intervals               = split_interval,
         tss_interval            = tss_interval,
         chrom_sizes             = chrom_sizes
     shell:
@@ -315,6 +325,7 @@ rule cleavage_profile:
     threads:
         config["cluster"]["cleavage_profile"].get("threads", default_threads)
     params:
+        rname                   = "cleavage_profile",
         l                       = left_flank,
         r                       = right_flank,
         min_len                 = min_fragment_len,
@@ -324,9 +335,8 @@ rule cleavage_profile:
     shell:
         """
         finaletoolkit \\
-            cleavage-profile {input.bam} {params.tss} \\
+            cleavage-profile {input.bam} {params.tss} {params.chrom_sizes} \\
             -o {output.bw} \\
-            -c {params.chrom_sizes} \\
             -l {params.l} \\
             -r {params.r} \\
             -q 30 \\
@@ -345,6 +355,7 @@ rule agg_wps:
     threads: 
         config["cluster"]["agg_wps"].get("threads", default_threads)
     params:
+        rname                   = "agg_wps",
         tss_interval            = tss_interval
     shell:
         dedent("""
@@ -363,6 +374,7 @@ rule agg_adjust_wps:
     threads:
         config["cluster"]["agg_adjust_wps"].get("threads", default_threads)
     params:
+        rname                   = "agg_adjust_wps",
         tss_interval            = tss_interval
     shell:
         dedent("""
@@ -382,6 +394,7 @@ rule agg_cleavage_profile:
     threads:
         config["cluster"]["agg_cleavage_profile"].get("threads", default_threads)
     params:
+        rname                   = "agg_cleavage_profile",
         tss_interval            = tss_interval     
     shell:
         dedent("""

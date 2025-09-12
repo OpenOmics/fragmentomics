@@ -46,7 +46,7 @@ def validate_directory(path):
 
 def main(args):
     start_time = time.time()
-    memory = str(args.memory) + 'G'
+    memory = str(int(args.memory*0.7)) + 'G' # since args.memory is total job memory, use fraction of it
     print(f"- Conversion started, converting files: {', '.join(args.files)}")
     fn_outs = []
     for _file in args.files:
@@ -55,6 +55,7 @@ def main(args):
     if duplicates:
         raise ValueError('Duplicate file basenames, will cause collbering of data.\n' + 
                          f'Please re-name your files to have distinct basenames, duplicated: {", ".join(duplicates)}')
+    idxs = []
     for align_file in args.files:
         this_mode = get_mode(align_file)
         output_fn = get_clean_fn(os.path.basename(align_file))
@@ -63,11 +64,21 @@ def main(args):
             raise ValueError(f'Unable to determine if cram/bam/sam: {align_file}')
         with pysam.AlignmentFile(align_file, this_mode) as alignment:
             print(f'\t > Converting {RED}{align_file}{RESET} to {GREEN}{output_fp}{RESET}')
-            pysam.sort("-@", str(args.threads), "-m", memory, "-o", output_fp, align_file)
+            # pysam.sort("-@", str(args.threads), "-m", memory, "-o", output_fp, align_file)
+            pysam.sort("-@", str(args.threads), "-o", output_fp, align_file)
             pysam.index(output_fp)
+            idxs.append(output_fp + '.bai')
+            alignment.close()
     end_time = time.time()
+    
+    for idx in idxs:
+        # prevent index older than bam errors
+        os.utime(idx, None)
+
     elapsed_time = end_time - start_time
-    print(f'- Convertsion completed, elapsed_time {elapsed_time:.4f} seconds')
+    print(f'- Convertsion(s) completed, elapsed time: {elapsed_time:.4f} seconds')
+    return
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = 'A script to convert a glob of bam/sam/cram files into a sorted bam')

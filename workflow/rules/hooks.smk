@@ -37,7 +37,7 @@ if config['options']['mode'] == 'slurm':
                     | sed "s/['.]//g" \\
                     | sort \\
                     | uniq \\
-                    | tr "\\n" " "
+                    | tr "\\n" " " \\
                 ) \\
             > job_information_${{timestamp}}.tsv \\
             || {{
@@ -74,7 +74,7 @@ if config['options']['mode'] == 'slurm':
                     | sed "s/['.]//g" \\
                     | sort \\
                     | uniq \\
-                    | tr "\\n" " "
+                    | tr "\\n" " " \\
                 ) \\
             > job_information_${{timestamp}}.tsv \\
             || {{

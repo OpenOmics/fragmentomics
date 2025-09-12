@@ -38,7 +38,7 @@
     },
     "interval_end_motifs": {
         "threads": 16,
-        "mem": "4G",
+        "mem": "96G",
         "time": "08:00:00",
         "partition": "norm"
     },
@@ -68,7 +68,7 @@
     },
     "cleavage_profile": {
         "threads": 24,
-        "mem": "8G",
+        "mem": "64G",
         "time": "08:00:00",
         "partition": "norm"
     },

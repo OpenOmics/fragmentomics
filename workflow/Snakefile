@@ -91,7 +91,6 @@ if tss:
         all_outputs.extend(expand(os.path.join(adjust_wps_dir, "{sample}_wps_out_tss_adj_aggr.wig"), sample=samples))
         all_outputs.extend(expand(os.path.join(cleavage_profile_dir, "{sample}_cleavage_profile_aggr.wig"), sample=samples))
 
-
 rule all:
     input:
         all_outputs

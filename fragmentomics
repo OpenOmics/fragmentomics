@@ -158,6 +158,8 @@ def run(sub_args):
         repo_path = git_repo,
         output_path = sub_args.output
     )
+    bin_dir = os.path.join(config['project']['pipeline_path'], 'bin')
+    config['binpath'] = bin_dir
 
     # Step 4. Resolve docker/singularity bind
     # paths from the config file.
@@ -167,8 +169,7 @@ def run(sub_args):
     )
 
     config['bindpaths'] = bindpaths
-    bin_dir = os.path.join(config['project']['pipeline_path'], 'bin')
-    config['binpath'] = bin_dir
+    
 
     # Step 5. Save config to output directory
     with open(os.path.join(sub_args.output, 'config.json'), 'w') as fh:
@@ -195,7 +196,6 @@ def run(sub_args):
         log = os.path.join(sub_args.output, 'logfiles', 'master.log')
     logfh = open(log, 'w')
 
-    input_par_dir = common_parent_directory(sub_args.input)
     mjob = runner(
         mode = sub_args.mode, 
         outdir = sub_args.output, 
@@ -204,7 +204,7 @@ def run(sub_args):
         jobname = sub_args.job_name,
         submission_script=os.path.join(__home__, 'src', 'run.sh'),
         logger = logfh,
-        additional_bind_paths = ",".join(bindpaths + [input_par_dir, bin_dir]),
+        additional_bind_paths = ",".join(bindpaths),
         tmp_dir = sub_args.tmp_dir, 
     )
     
