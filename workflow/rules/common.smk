@@ -51,15 +51,15 @@ rule stage_bams:
         all_input_files
     output:
         expand(os.path.join(bam_dir, "{sample}.sorted.bam"), sample=sample_stems)
+    container: 
+        config['images']['finaletoolkit']
+    threads: 
+        config["cluster"]["stage_bams"].get("threads", default_threads)
     params:
         rname                   = "stage_bams",
         bam_dir                  = bam_dir,
         python_script            = os.path.join(bin_dir, 'stage_input_files.py'),
         memory                   = str(config["cluster"]["stage_bams"].get("mem", default_threads)).replace('G' ,'')
-    threads: 
-        config["cluster"]["stage_bams"].get("threads", default_threads)
-    container: 
-        config['images']['finaletoolkit']
     shell:
         dedent("""
         python {params.python_script} \\
@@ -77,13 +77,13 @@ rule coverage:
         bed                     = os.path.join(coverage_dir, "{sid}_coverage.bed")
     threads: 
         config["cluster"]["coverage"].get("threads", default_threads)
+    container: 
+        config['images']['finaletoolkit']
     params:
         rname                   = "coverage",
         intervals               = split_interval,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len
-    container: 
-        config['images']['finaletoolkit']
     shell:
         dedent("""
         finaletoolkit \\
@@ -106,6 +106,8 @@ rule frag_length_bins:
     output:
         tsv                     = os.path.join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".tsv"),
         png                     = os.path.join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".png")
+    container: 
+        config['images']['finaletoolkit']
     threads:
         config["cluster"]["frag_length_bins"].get("threads", default_threads)
     params:
@@ -113,8 +115,6 @@ rule frag_length_bins:
         bin_size                = str(bin_size),
         min_len                 = str(min_fragment_len),
         max_len                 = str(max_fragment_len),
-    container: 
-        config['images']['finaletoolkit']
     shell:
         dedent("""
         finaletoolkit \\
@@ -135,6 +135,8 @@ rule frag_length_intervals:
         bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
         bed                     = os.path.join(fragment_length_int_dir, "{sid}_frag_interval.bed")
+    container: 
+        config['images']['finaletoolkit']
     threads:
         config["cluster"]["frag_length_intervals"].get("threads", default_threads)
     params:
@@ -142,8 +144,6 @@ rule frag_length_intervals:
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
         intervals               = intervals
-    container: 
-        config['images']['finaletoolkit']
     shell:
         dedent("""
         finaletoolkit \\
@@ -163,10 +163,10 @@ rule end_motifs:
         bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
         tsv                     = os.path.join(end_motifs_dir, "{sid}_endmotif.tsv"),
-    threads: 
-        config["cluster"]["end_motifs"].get("threads", default_threads)
     container: 
         config['images']['finaletoolkit']
+    threads: 
+        config["cluster"]["end_motifs"].get("threads", default_threads)
     params:
         rname                   = "end_motifs",
         min_len                 = min_fragment_len,
@@ -245,6 +245,8 @@ rule delfi:
         bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
         bed                     = os.path.join(delfi_dir, "{sid}_delfi.bed"),
+    container: 
+        config['images']['finaletoolkit']
     threads:
         config["cluster"]["delfi"].get("threads", default_threads)
     params:
@@ -270,6 +272,8 @@ rule wps:
         bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
         bw                      = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
+    container: 
+        config['images']['finaletoolkit']
     threads: 
         config["cluster"]["wps"].get("threads", default_threads)
     params:
@@ -296,6 +300,8 @@ rule adjust_wps:
         wps_bw                  = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
     output:
         bw                      = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
+    container: 
+        config['images']['finaletoolkit']
     threads: 
         config["cluster"]["adjust_wps"].get("threads", default_threads)
     params:
@@ -312,7 +318,6 @@ rule adjust_wps:
             -m 200 \\
             -S \\
             --subtract-edges \\
-            -w {threads} \\
             -v
         """
 
@@ -322,6 +327,8 @@ rule cleavage_profile:
         bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
     output:
         bw                      = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw")
+    container: 
+        config['images']['finaletoolkit']
     threads:
         config["cluster"]["cleavage_profile"].get("threads", default_threads)
     params:
@@ -333,7 +340,7 @@ rule cleavage_profile:
         tss                     = tss,
         chrom_sizes             = chrom_sizes
     shell:
-        """
+        dedent("""
         finaletoolkit \\
             cleavage-profile {input.bam} {params.tss} {params.chrom_sizes} \\
             -o {output.bw} \\
@@ -344,7 +351,7 @@ rule cleavage_profile:
             -max {params.max_len} \\
             -w {threads} \\
             -v
-        """
+        """)
 
 
 rule agg_wps:
@@ -352,6 +359,8 @@ rule agg_wps:
         bw                      = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
     output:
         wig                     = os.path.join(wps_dir, "{sid}_wps_out_tss_aggr.wig")
+    container: 
+        config['images']['finaletoolkit']
     threads: 
         config["cluster"]["agg_wps"].get("threads", default_threads)
     params:
@@ -371,6 +380,8 @@ rule agg_adjust_wps:
         bw                      = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
     output:
         wig                     = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adj_aggr.wig")
+    container: 
+        config['images']['finaletoolkit']
     threads:
         config["cluster"]["agg_adjust_wps"].get("threads", default_threads)
     params:
@@ -391,6 +402,8 @@ rule agg_cleavage_profile:
         bw                      = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw"),
     output:
         wig                     = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_aggr.wig"),
+    container: 
+        config['images']['finaletoolkit']
     threads:
         config["cluster"]["agg_cleavage_profile"].get("threads", default_threads)
     params:

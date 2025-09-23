@@ -1,5 +1,5 @@
 {
     "images": {
-        "finaletoolkit": "docker://rroutsong/finaletoolkit:0.0.1"
+        "finaletoolkit": "docker://rroutsong/finaletoolkit:0.0.2"
     }
 }
