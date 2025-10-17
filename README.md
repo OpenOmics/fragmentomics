@@ -6,4 +6,4 @@ This workflow is runs FinaleToolKit (FragmentatIoN AnaLysis of cell-free DNA Too
 
 ## Dependencies
 
-Requires: Python version > 3.8
+Requires: Python version > 3.8, snakemake>7.0, singularity
