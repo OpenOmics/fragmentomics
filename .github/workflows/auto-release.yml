@@ -23,10 +23,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          git clone https://github.com/OpenOmics/snakevision.git /vis
+          git clone https://github.com/OpenOmics/snakevision.git $GITHUB_WORKSPACE/vis
           pip install -r /vis/requirements.txt
           pip install -r .github/release_reqs.txt
-          echo "/vis/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/vis/bin" >> $GITHUB_PATH
       
       - name: Run script
         env:
