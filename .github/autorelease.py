@@ -258,12 +258,6 @@ def parse_release_options(lines):
 
 
 def main(args):
-    # URLs
-    ORG_URL = "https://github.com/OpenOmics"
-    REPO_URL = f"{ORG_URL}/fragmentomics"
-    PR_URL = f"{REPO_URL}/pull/1"
-    setattr(args, 'url', PR_URL)
-
     extract_repo_url_from_pr = lambda pr_url: pr_url.rstrip('/').split('/pull/')[0]
 
     PR_URL = args.url
