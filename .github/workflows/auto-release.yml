@@ -42,4 +42,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: script-output
-          path: upload/  # Change path if your script outputs somewhere else
+          path: upload/
