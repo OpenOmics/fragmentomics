@@ -56,7 +56,7 @@ def create_github_tag(repo_url, token, tag_name, message="", target_sha=None):
             ref=f"refs/tags/{tag_name}",
             sha=target_sha
         )
-        print(f"Lightweight tag '{tag_name}' created at {target_sha}")
+        # print(f"Lightweight tag '{tag_name}' created at {target_sha}")
         return ref
     
     # Create an annotated tag (with message and metadata)
@@ -74,8 +74,8 @@ def create_github_tag(repo_url, token, tag_name, message="", target_sha=None):
             ref=f"refs/tags/{tag_name}",
             sha=tag.sha
         )
-        print(f"Annotated tag '{tag_name}' created at {target_sha}")
-        print(f"Message: {message}")
+        # print(f"Annotated tag '{tag_name}' created at {target_sha}")
+        # print(f"Message: {message}")
         return tag
 
 
@@ -116,8 +116,8 @@ def create_tag_and_release(repo_url, token, tag_name, release_name, release_body
         prerelease=False
     )
     
-    print(f"Tag and release '{tag_name}' created")
-    print(f"Release URL: {release.html_url}")
+    # print(f"Tag and release '{tag_name}' created")
+    # print(f"Release URL: {release.html_url}")
     return release
 
 
@@ -188,7 +188,7 @@ def get_latest_version(repo_url, token=None):
             raise
     except Exception as e:
         # Handle any other errors
-        print(f"Error getting latest version: {e}")
+        # print(f"Error getting latest version: {e}")
         return "0.0.0"
     
 
