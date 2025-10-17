@@ -158,7 +158,7 @@ def run(sub_args):
         repo_path = git_repo,
         output_path = sub_args.output
     )
-    bin_dir = os.path.join(config['project']['pipeline_path'], 'bin')
+    bin_dir = os.path.join(sub_args.output, 'bin')
     config['binpath'] = bin_dir
 
     # Step 4. Resolve docker/singularity bind

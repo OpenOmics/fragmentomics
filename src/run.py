@@ -17,7 +17,7 @@ from utils import (git_commit_hash,
 from . import __pipeline__, version as __version__
 
 
-def init(repo_path, output_path, links=[], required=['workflow', 'resources', 'config']):
+def init(repo_path, output_path, links=[], required=['workflow', 'bin', 'resources', 'config']):
     """
     Initialize the output directory. If user provides a output
     directory path that already exists on the filesystem as a file 
