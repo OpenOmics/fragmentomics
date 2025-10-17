@@ -34,9 +34,8 @@ jobs:
             PR_NUMBER: ${{ github.event.pull_request.number }}
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NEW_VER=$(python .github/autorelease.py $PR_URL -t $GITHUB_TOKEN) 
+          NEW_VER=$(python .github/autorelease.py $PR_URL -t $GITHUB_TOKEN)
           echo -e "\n --- $NEW_VER --- \n"
           python .github/snakevis.py .github/snakevis.cfg $GITHUB_WORKSPACE/upload
-          mkdir $GITHUB_WORKSPACE/upload
           ls -al $GITHUB_WORKSPACE/upload
           gh release upload $NEW_VER $GITHUB_WORKSPACE/upload/pipeline_rulegraph.svg --clobber
