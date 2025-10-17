@@ -281,7 +281,7 @@ def main(args):
         release_name=f"Version {new_version}",
         release_body=pr_notes
     )
-    return
+    return f"v{new_version}"
 
 
 if __name__ == "__main__":

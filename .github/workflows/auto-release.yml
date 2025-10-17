@@ -34,12 +34,8 @@ jobs:
             PR_NUMBER: ${{ github.event.pull_request.number }}
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python .github/autorelease.py $PR_URL
+          NEW_VER=$(python .github/autorelease.py $PR_URL)
           python .github/snakevis.py .github/snakevis.cfg upload
-
-      - name: Upload results (optional)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: script-output
-          path: upload/
+          gh release upload $NEW_VER \
+            upload/* \
+            --clobber
