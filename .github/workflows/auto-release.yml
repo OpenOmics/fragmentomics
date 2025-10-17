@@ -30,11 +30,11 @@ jobs:
             PR_URL: ${{ github.event.pull_request.html_url }}
             PR_NUMBER: ${{ github.event.pull_request.number }}
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python .github/your_script.py "$PR_URL"
+        run: python .github/autorelease.py $PR_URL
 
       - name: Upload results (optional)
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: script-output
           path: output/  # Change path if your script outputs somewhere else
