@@ -81,7 +81,7 @@ rule coverage:
         config['images']['finaletoolkit']
     params:
         rname                   = "coverage",
-        intervals               = split_interval,
+        intervals               = tss_interval,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len
     shell:

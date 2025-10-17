@@ -23,18 +23,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          git clone https://github.com/OpenOmics/snakevision.git /vis
+          pip install -r /vis/requirements.txt
           pip install -r .github/release_reqs.txt
+          echo "/vis/bin" >> $GITHUB_PATH
       
       - name: Run script
         env:
             PR_URL: ${{ github.event.pull_request.html_url }}
             PR_NUMBER: ${{ github.event.pull_request.number }}
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python .github/autorelease.py $PR_URL
+        run: |
+          python .github/autorelease.py $PR_URL
+          python .github/snakevis.py .github/snakevis.cfg .github/snakevis.cfg upload
 
       - name: Upload results (optional)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: script-output
-          path: output/  # Change path if your script outputs somewhere else
+          path: upload/  # Change path if your script outputs somewhere else
