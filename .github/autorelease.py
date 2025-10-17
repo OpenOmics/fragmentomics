@@ -279,7 +279,6 @@ def main(args):
     current_version = get_latest_version(REPO_URL)
     # increment current version based on options
     new_version = increment_version(current_version, pr_options)
-    import ipdb; ipdb.set_trace()
 
     create_tag_and_release(
         repo_url=args.url,
