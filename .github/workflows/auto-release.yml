@@ -35,7 +35,7 @@ jobs:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python .github/autorelease.py $PR_URL
-          python .github/snakevis.py .github/snakevis.cfg .github/snakevis.cfg upload
+          python .github/snakevis.py .github/snakevis.cfg upload
 
       - name: Upload results (optional)
         if: always()
