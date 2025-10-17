@@ -1,3 +1,6 @@
 urllib3
 packaging
 PyGithub
+snakemake
+networkx
+dagviz

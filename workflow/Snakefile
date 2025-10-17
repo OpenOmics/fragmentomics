@@ -15,8 +15,6 @@ from scripts.common import (
 )
 
 
-configfile: "config.yaml"
-
 # project configuration options
 samples                         = config["samples"]
 genome                          = config['options']['genome_alias']
