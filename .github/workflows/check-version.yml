@@ -29,4 +29,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           PR_URL="https://github.com/${REPO}/pull/${PR_NUMBER}"
-          python .github/autorelease.py $PR_URL -t $GITHUB_TOKEN --check-version
+          python .github/autorelease.py $PR_URL -t $GITHUB_TOKEN --check-version | tee /tmp/version_check.txt
+          echo "## VERSION File Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/version_check.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
