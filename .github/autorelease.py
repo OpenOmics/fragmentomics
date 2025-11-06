@@ -257,8 +257,98 @@ def parse_release_options(lines):
     return result
 
 
+def read_version_file(version_file_path="VERSION"):
+    """
+    Read the version from the VERSION file in the repository root.
+    
+    Args:
+        version_file_path: Path to the VERSION file (default: "VERSION")
+    
+    Returns:
+        str: Version string from the file, stripped of whitespace
+    """
+    try:
+        with open(version_file_path, 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"VERSION file not found at {version_file_path}")
+    except Exception as e:
+        raise Exception(f"Error reading VERSION file: {e}")
+
+
+def check_version_file(args):
+    """
+    Check if the VERSION file contains the expected version based on PR options.
+    This should be run before PR merge.
+    
+    Args:
+        args: Parsed command-line arguments
+    
+    Returns:
+        bool: True if version is correct, False otherwise
+    
+    Raises:
+        SystemExit: If version check fails
+    """
+    def extract_repo_url_from_pr(pr_url):
+        return pr_url.rstrip('/').split('/pull/')[0]
+
+    PR_URL = args.url
+    REPO_URL = extract_repo_url_from_pr(PR_URL)
+    
+    # Get PR options
+    pr_notes, pr_options = get_notes_and_options(PR_URL)
+    
+    # If skip is selected, version file doesn't need to be updated
+    if pr_options['skip']:
+        print("✓ Release skipped - VERSION file check not required")
+        return True
+    
+    # Verify exactly one release type is selected
+    release_types = [k for k, v in pr_options.items() if k != 'skip' and v]
+    if len(release_types) != 1:
+        print(f"✗ ERROR: Must select exactly one release type (found: {len(release_types)})")
+        sys.exit(1)
+    
+    # Get current version from GitHub releases
+    current_version = get_latest_version(REPO_URL, token=args.token)
+    
+    # Calculate expected version based on PR options
+    expected_version = increment_version(current_version, pr_options)
+    
+    # Read VERSION file
+    try:
+        version_file_content = read_version_file(args.version_file)
+    except Exception as e:
+        print(f"✗ ERROR: {e}")
+        sys.exit(1)
+    
+    # Compare versions
+    if version_file_content == expected_version:
+        release_type = release_types[0]
+        print(f"✓ VERSION file is correct!")
+        print(f"  Current version: {current_version}")
+        print(f"  Expected version ({release_type}): {expected_version}")
+        print(f"  VERSION file: {version_file_content}")
+        return True
+    else:
+        release_type = release_types[0]
+        print(f"✗ ERROR: VERSION file does not match expected version!")
+        print(f"  Current version: {current_version}")
+        print(f"  Expected version ({release_type}): {expected_version}")
+        print(f"  VERSION file: {version_file_content}")
+        print(f"\nPlease update the VERSION file to: {expected_version}")
+        sys.exit(1)
+
+
 def main(args):
-    extract_repo_url_from_pr = lambda pr_url: pr_url.rstrip('/').split('/pull/')[0]
+    # If check-version flag is set, run version check and exit
+    if args.check_version:
+        check_version_file(args)
+        return
+    
+    def extract_repo_url_from_pr(pr_url):
+        return pr_url.rstrip('/').split('/pull/')[0]
 
     PR_URL = args.url
     REPO_URL = extract_repo_url_from_pr(PR_URL)
@@ -287,7 +377,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="ARG PARSE DESCRIPTION"
+        description="Automate GitHub releases and version checks for pull requests"
     )
     
     parser.add_argument(
@@ -310,5 +400,19 @@ if __name__ == "__main__":
         default=os.getenv('GITHUB_TOKEN'),
         help="GitHub token"
     )
+    
+    parser.add_argument(
+        "--check-version",
+        action="store_true",
+        help="Check if VERSION file matches expected version (pre-merge check)"
+    )
+    
+    parser.add_argument(
+        "--version-file",
+        type=str,
+        default="VERSION",
+        help="Path to the VERSION file (default: VERSION)"
+    )
+    
     args = parser.parse_args()
     main(args)
