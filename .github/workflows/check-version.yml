@@ -1,4 +1,4 @@
-name: Check VERSION File 
+name: Check if VERSION file is correct version
 
 on:
   pull_request:
