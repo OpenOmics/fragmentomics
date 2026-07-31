@@ -1,20 +1,20 @@
 # Project Information
-site_name: baseline
+site_name: fragmentomics
 site_author: Skyler Kuhn
 site_description: >-
-  An awesome OpenOmics baseline pipeline
+  An awesome OpenOmics fragmentomics pipeline
 
 # Repository
-repo_name: OpenOmics/baseline
-repo_url: https://github.com/OpenOmics/baseline
-edit_uri: https://github.com/OpenOmics/baseline/edit/main/docs/
+repo_name: OpenOmics/fragmentomics
+repo_url: https://github.com/OpenOmics/fragmentomics
+edit_uri: https://github.com/OpenOmics/fragmentomics/edit/main/docs/
 
 # Extra
 extra_css:
   - css/extra.css
 
 # Copyright
-copyright: Copyright &copy; 2023 OpenOmics
+copyright: Copyright &copy; 2026 OpenOmics
 
 # Configuration
 theme:
@@ -53,8 +53,6 @@ extra:
       link: https://github.com/OpenOmics
     - icon: fontawesome/brands/docker
       link: https://hub.docker.com/u/skchronicles
-  version:
-    provider: mike
 
 # Extensions
 markdown_extensions:
@@ -98,10 +96,10 @@ markdown_extensions:
 nav:
   - About: index.md
   - Commands: 
-    - baseline run: usage/run.md
-    - baseline unlock: usage/unlock.md
-    - baseline install: usage/install.md
-    - baseline cache: usage/cache.md
+    - fragmentomics run: usage/run.md
+    - fragmentomics unlock: usage/unlock.md
+    - fragmentomics install: usage/install.md
+    - fragmentomics cache: usage/cache.md
   - FAQ:
     - General Questions: faq/questions.md
   - License: license.md

@@ -1,4 +1,6 @@
 {
     "options": {
+        "input_type": "auto",
+        "layout": "paired"
     }
 }

@@ -1,50 +1,109 @@
-#!/usr/bin/env python3
+"""
+Hitchhikers guide for writing new rules in this pipeline.
+
+A. Reading inputs
+   User-provided files are symlinked into WORKPATH/inputs/. Read the
+   original inputs from there, e.g.:
+       join(WORKPATH, "inputs", "{name}.R1.fastq.gz")
+       join(WORKPATH, "inputs", "{name}.R2.fastq.gz")
+
+B. Writing outputs
+   Treat WORKPATH/inputs/ as read-only. Write generated outputs
+   elsewhere under WORKPATH, usually to per-sample or project-level
+   paths, e.g.:
+       join(WORKPATH, "{name}", "md5", "{name}.R1.fastq.gz.md5")
+       join(WORKPATH, "project", "counts", "matrix.tsv")
+
+C. Resources and threads
+   Every rule should define its resources and threads with allocated().
+   The rule name passed to allocated() must match the Snakemake rule
+   name, e.g.:
+       resources:
+           partition = allocated("partition", "rule_name", cluster),
+           mem       = allocated("mem",       "rule_name", cluster),
+           time      = allocated("time",      "rule_name", cluster),
+           gres      = allocated("gres",      "rule_name", cluster),
+       threads:
+           int(allocated("threads", "rule_name", cluster))
+
+   Edit config/cluster.json to change threads, memory, time, partition,
+   or gres. Add a key matching the rule name to override "__default__".
+
+D. Containers
+   Edit config/containers.json to add the container image keys used by
+   the rule, e.g.:
+       container:
+           config["images"]["image-key"]
+
+E. Other configuration
+   Edit config/genome.json for reference paths, config/modules.json for
+   tool/module settings, and config/config.json for global options such
+   as input_type and layout.
+
+F. Wiring it up
+   Don't forget to import any new rules into the Snakefile and update
+   "rule all" to include the new output files as final targets. If you
+   add a new rule and forgot to add it's output(s) to rule all, Snakemake
+   will not run the rule.
+"""
+# Python standard library
 import json
-from glob import glob
+import os
 from os.path import join
-from os import listdir
-from pathlib import Path
-from snakemake.workflow import workflow as wf_api
-from snakemake.utils import R
+# Local imports
 from scripts.common import (
     allocated,
-    provided, 
+    provided,
     references,
-    str_bool,
-    get_sid
+    str_bool
 )
 
 
-# project configuration options
-samples                         = config["samples"]
-genome                          = config['options']['genome_alias']
-genome_files                    = config["references"][genome]
-ref2bit                         = 'ref2bit' in genome_files
-intervals                       = 'intervals' in genome_files
-chrom_sizes                     = 'chrom_sizes' in genome_files
-tss                             = 'tss' in genome_files
-tss_interval                    = 'tss_interval' in genome_files
-split_interval                  = int(config['options']['interval'])
-max_fragment_len                = int(config['options']['max'])
-min_fragment_len                = int(config['options']['min'])
+# Main config file, generated from
+# user input and config/*.json
+configfile: "config.json"
+
+# Read in resource information,
+# containing information about
+# threads, mem, walltimes, etc.
+# For local mode, the max number
+# of threads is already capped
+# via the --cores option. This
+# is for when the pipeline is
+# run in slurm mode.
+with open(join("config", "cluster.json")) as fh:
+    cluster = json.load(fh)
+
+# Global workflow variables
+samples                         = config["samples"]                            # Base name of input samples
+genome                          = config['options']['genome']                  # Genome build
+genome_files                    = config["references"][genome]                 # Reference files for genome build
+ref2bit                         = 'ref2bit' in genome_files                    # Is there a 2bit fiel for genome build
+intervals                       = 'intervals' in genome_files                  # Is there a interval file for genome build
+chrom_sizes                     = 'chrom_sizes' in genome_files                # Is there a Chromosome sizes file for genome build
+tss                             = 'tss' in genome_files                        # Is there a TSS file for genome build
+tss_interval                    = 'tss_interval' in genome_files               # Is there a Is there a TSS interval file for genome build
+split_interval                  = int(config['options']['split_interval'])   
+max_fragment_len                = int(config['options']['fragment_maximum'])
+min_fragment_len                = int(config['options']['fragment_minimum'])
 bin_size                        = int(config['options']['bin_size'])
 
 # directories
 data_dir                         = config["project"]["datapath"]
 all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
-bin_dir                          = config['binpath']
-bam_dir                          = os.path.join(output_dir, 'bams')
-coverage_dir                     = os.path.join(output_dir, 'coverage')
-fragment_length_dir              = os.path.join(output_dir, 'frag_length_bins')
-fragment_length_int_dir          = os.path.join(output_dir, 'frag_length_intervals')
-end_motifs_dir                   = os.path.join(output_dir, 'end_motifs')
-interval_end_motifs_dir          = os.path.join(output_dir, 'interval_end_motifs')
-mds_dir                          = os.path.join(output_dir, 'mds')
-delfi_dir                        = os.path.join(output_dir, 'delfi')
-wps_dir                          = os.path.join(output_dir, 'wps')
-adjust_wps_dir                   = os.path.join(output_dir, 'adjust_wps')
-cleavage_profile_dir             = os.path.join(output_dir, 'cleavage_profile')
+bin_dir                          = join(output_dir, 'workflow', 'scripts')
+bam_dir                          = join(output_dir, 'bams')
+coverage_dir                     = join(output_dir, 'coverage')
+fragment_length_dir              = join(output_dir, 'frag_length_bins')
+fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
+end_motifs_dir                   = join(output_dir, 'end_motifs')
+interval_end_motifs_dir          = join(output_dir, 'interval_end_motifs')
+mds_dir                          = join(output_dir, 'mds')
+delfi_dir                        = join(output_dir, 'delfi')
+wps_dir                          = join(output_dir, 'wps')
+adjust_wps_dir                   = join(output_dir, 'adjust_wps')
+cleavage_profile_dir             = join(output_dir, 'cleavage_profile')
 
 # Define outputs
 all_outputs = []
@@ -52,12 +111,12 @@ all_outputs = []
 # Bam starting point (convert any sam/cram)
 # Fragment length bins
 all_outputs.extend(
-    expand(os.path.join(bam_dir, "{sample}.sorted.bam"), sample=samples)
+    expand(join(bam_dir, "{sample}.sorted.bam"), sample=samples)
 )
 
 all_outputs.extend(
     expand(
-        os.path.join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"), 
+        join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"), 
         sample=samples, 
         bin_size=[bin_size]
     )
@@ -66,34 +125,37 @@ all_outputs.extend(
 if split_interval:
     all_outputs.extend(
         expand(
-            os.path.join(fragment_length_int_dir, "{sample}_frag_interval.bed"),
+            join(fragment_length_int_dir, "{sample}_frag_interval.bed"),
             sample=samples
         )
     )
 
 if ref2bit:
-    all_outputs.extend(expand(os.path.join(end_motifs_dir, "{sample}_endmotif.tsv"), sample=samples))
-    all_outputs.extend(expand(os.path.join(mds_dir, "{sample}_mds.tsv"), sample=samples))
+    all_outputs.extend(expand(join(end_motifs_dir, "{sample}_endmotif.tsv"), sample=samples))
+    all_outputs.extend(expand(join(mds_dir, "{sample}_mds.tsv"), sample=samples))
     if intervals:
-        all_outputs.extend(expand(os.path.join(interval_end_motifs_dir, "{sample}_endmotif_interval.tsv"), sample=samples))
+        all_outputs.extend(expand(join(interval_end_motifs_dir, "{sample}_endmotif_interval.tsv"), sample=samples))
         if chrom_sizes:
-            all_outputs.extend(expand(os.path.join(delfi_dir, "{sample}_delfi.bed"), sample=samples))
+            all_outputs.extend(expand(join(delfi_dir, "{sample}_delfi.bed"), sample=samples))
 
 if tss:
-    all_outputs.extend(expand(os.path.join(wps_dir, "{sample}_wps_out_tss.bw"), sample=samples))
+    all_outputs.extend(expand(join(wps_dir, "{sample}_wps_out_tss.bw"), sample=samples))
     if tss_interval:
-        all_outputs.extend(expand(os.path.join(wps_dir, "{sample}_wps_out_tss_aggr.wig"), sample=samples))
+        all_outputs.extend(expand(join(wps_dir, "{sample}_wps_out_tss_aggr.wig"), sample=samples))
     if chrom_sizes and tss_interval:
-        all_outputs.extend(expand(os.path.join(adjust_wps_dir, "{sample}_wps_out_tss_adjusted.bw"), sample=samples))
-        all_outputs.extend(expand(os.path.join(cleavage_profile_dir, "{sample}_cleavage_profile_tss.bw"), sample=samples))
-        all_outputs.extend(expand(os.path.join(adjust_wps_dir, "{sample}_wps_out_tss_adj_aggr.wig"), sample=samples))
-        all_outputs.extend(expand(os.path.join(cleavage_profile_dir, "{sample}_cleavage_profile_aggr.wig"), sample=samples))
+        all_outputs.extend(expand(join(adjust_wps_dir, "{sample}_wps_out_tss_adjusted.bw"), sample=samples))
+        all_outputs.extend(expand(join(cleavage_profile_dir, "{sample}_cleavage_profile_tss.bw"), sample=samples))
+        all_outputs.extend(expand(join(adjust_wps_dir, "{sample}_wps_out_tss_adj_aggr.wig"), sample=samples))
+        all_outputs.extend(expand(join(cleavage_profile_dir, "{sample}_cleavage_profile_aggr.wig"), sample=samples))
 
+
+# Final output files of the pipeline
 rule all:
     input:
         all_outputs
 
 
-# Import rules 
+# Import rules
 include: join("rules", "common.smk")
+# include: join("rules", "example.smk")
 include: join("rules", "hooks.smk")
