@@ -1,17 +1,17 @@
-# <code>baseline <b>install</b></code>
+# <code>fragmentomics <b>install</b></code>
 
-## 1. About
- 
-The `baseline` executable is composed of several inter-related sub commands. Please see `baseline -h` for all available options.
+???+ note
 
-This part of the documentation describes options and concepts for <code>baseline <b>install</b></code> sub command in more detail.
+    This pipeline does not have any reference files that need to be downloaded
+    by default. As so, everything on this page can be safely ignored! We
+    have bundled all the reference files for the pipeline within our Github
+    repository. All the reference files are located within the [resources folder](https://github.com/OpenOmics/fragmentomics/tree/main/resources).
 
-This page is still under construction 👷, more information is coming soon!
 
-<!--
-The `baseline` executable is composed of several inter-related sub commands. Please see `baseline -h` for all available options.
+## 1. About 
+The `fragmentomics` executable is composed of several inter-related sub commands. Please see `fragmentomics -h` for all available options.
 
-This part of the documentation describes options and concepts for <code>baseline <b>install</b></code> sub command in more detail.
+This part of the documentation describes options and concepts for <code>fragmentomics <b>install</b></code> sub command in more detail.
 
 With minimal configuration, the **`install`** sub command enables you to download the pipeline's resource bundle locally. This is necessary when setting up the pipeline on a new target system or cluster. 
 
@@ -19,20 +19,20 @@ The pipeline uses a set of reference files to process the data. These reference 
 
 Since most resource bundles are very large; we recommend using multiple threads for pulling reference files concurrently. The resource bundle can be very large so please ensure you have sufficent disk space prior to running this sub command.
 
-**Please Note:** The resource bundle requires about X GB of available disk space. If you are running the pipeline on the Biowulf cluster, you do *NOT* need to download the pipeline's resource bundle. It is already accessible to all HPC users. This sub command is for users running the pipeline outside of the Biowulf cluster.
+**Please Note:** The resource bundle requires about `XX GB` of available disk space. If you are running the pipeline on the Biowulf cluster, you do *NOT* need to download the pipeline's resource bundle. It is already accessible to all HPC users. This sub command is for users running the pipeline outside of the Biowulf cluster.
 
-Downloading the resource bundle is fast and easy! In its most basic form, <code>baseline <b>install</b></code> only has *one required input*.
+Downloading the resource bundle is fast and easy! In its most basic form, <code>fragmentomics <b>install</b></code> only has *one required input*.
 
 ## 2. Synopsis
 ```text
-$ baseline install [--help] [--dry-run] \
+$ fragmentomics install [--help] [--dry-run] \
      [--force] [--threads] \
      --ref-path REF_PATH
 ```
 
 The synopsis for each command shows its parameters and their usage. Optional parameters are shown in square brackets.
 
-A user **must** provide a output directory for the reference file download  via the `--ref-path` argument. Once the download of the resource bundle  has completed, a new child directory called baseline will be created. This new directory will contain all of the pipeline's required reference files. The path to this new directory can be passed to the `--resource-bundle` option of the <code>baseline <b>run</b></code> subcomand. This allow users outside of Biowulf to run the pipeline.
+A user **must** provide a output directory for the reference file download  via the `--ref-path` argument. Once the download of the resource bundle  has completed, a new child directory called fragmentomics will be created. This new directory will contain all of the pipeline's required reference files. The path to this new directory can be passed to the `--resource-bundle` option of the <code>fragmentomics <b>run</b></code> subcomand. This allow users outside of Biowulf to run the pipeline.
 
 Use you can always use the `-h` option for information on a specific command.
 
@@ -43,7 +43,7 @@ Use you can always use the `-h` option for information on a specific command.
 > **Path where the resource bundle will be downloaded.**  
 > *type: path*
 > 
-> Any resouces defined in the 'config/install.json' will be pulled onto the local filesystem. After the files have been downloaded, a new directory with the name `baseline` will be created. It contains all the required reference files of the pipeline. The path to this new directory can be passed to the run sub command's `--resource-bundle` option. Please see the run sub command for more information.
+> Any resouces defined in the 'config/install.json' will be pulled onto the local filesystem. After the files have been downloaded, a new directory with the name `fragmentomics` will be created. It contains all the required reference files of the pipeline. The path to this new directory can be passed to the run sub command's `--resource-bundle` option. Please see the run sub command for more information.
 > 
 > ***Example:*** `--ref-path /data/$USER/refs`
 
@@ -88,6 +88,7 @@ Each of the following arguments are optional and do not need to be provided.
 > ***Example:*** `--threads 12`
 
 ## 3. Example
+
 ```bash 
 # Step 0.) Grab an interactive node,
 # do not run on head node! 
@@ -95,11 +96,13 @@ srun -N 1 -n 1 --time=12:00:00 -p interactive --mem=24gb  --cpus-per-task=12 --p
 module purge
 module load singularity snakemake
 
-# Step 1.) Dry-run download of the resource bundle
-  baseline install --ref-path /data/$USER/refs \
-             --force \
-             --dry-run \
-             --threads 12
+# Step 1.) Dry-run the install
+# sub-command to see what would
+# be downloaded
+fragmentomics install \
+    --ref-path /data/$USER/references/fragmentomics \
+    --threads 12 \
+    --dry-run 
 
 # Step 2.) Download the resource bundle,
 # This command will NOT automatically submit
@@ -107,12 +110,11 @@ module load singularity snakemake
 # submitting this next command to the cluster
 # as a job. Download speeds will vary so it 
 # is best to set the wall time to 2 days.
-baseline install --ref-path /data/$USER/refs \
-           --force \
-           --threads 12
+fragmentomics install \
+  --ref-path /data/$USER/references/fragmentomics \
+  --threads 12
 
 # Checkout the downloaded files
-cd /data/$USER/refs
-tree baseline
+cd /data/$USER/references/fragmentomics
+tree .
 ```
--->
