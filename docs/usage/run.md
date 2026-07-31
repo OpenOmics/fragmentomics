@@ -275,9 +275,11 @@ module load singularity snakemake
 # Step 2A.) Dry-run the pipeline with
 # Input paired-end FastQ files, please
 # note single-end data is not supported!
-./fragmentomics run --input .tests/*.fastq.gz \
-    --sif-cache /data/OpenOmics/SIFs \
+./fragmentomics run \
+    --input .tests/*.fastq.gz \
     --output /data/$USER/output \
+    --genome hg38 \
+    --sif-cache /data/OpenOmics/SIFs \
     --mode slurm \
     --dry-run
 
@@ -285,8 +287,10 @@ module load singularity snakemake
 # The slurm mode will submit jobs to 
 # the cluster. It is recommended running 
 # the pipeline in this mode.
-./fragmentomics run --input .tests/*.fastq.gz \
-    --sif-cache /data/OpenOmics/SIFs \
+./fragmentomics run \
+    --input .tests/*.fastq.gz \
     --output /data/$USER/output \
+    --genome hg38 \
+    --sif-cache /data/OpenOmics/SIFs \
     --mode slurm
 ```

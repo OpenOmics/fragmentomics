@@ -466,6 +466,7 @@ def parsed_arguments(name, description):
           # noting that the pipeline also
           # supports paired-end FastQ files.
           {0} run \\
+              --genome hg38 \\
               --input .tests/*.bam \\
               --output pipeline_output \\
               --mode slurm \\
@@ -478,6 +479,7 @@ def parsed_arguments(name, description):
           # running the pipeline in this
           # mode as it will be faster.
           {0} run \\
+              --genome hg38 \\
               --input .tests/*.bam \\
               --output pipeline_output \\
               --mode slurm
