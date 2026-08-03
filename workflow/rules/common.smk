@@ -1,16 +1,17 @@
+# Python standard library
+from os.path import join
 import os
 from textwrap import dedent
 
 
 # configuration
-split_interval                  = int(config['options']['interval'])
-max_fragment_len                = int(config['options']['max'])
-min_fragment_len                = int(config['options']['min'])
-right_flank                     = int(config['options']['right'])
-left_flank                      = int(config['options']['left'])
+split_interval                  = int(config['options']['split_interval'])   
+max_fragment_len                = int(config['options']['fragment_maximum'])
+min_fragment_len                = int(config['options']['fragment_minimum'])
+right_flank                     = int(config['options']['right_tss_flank'])
+left_flank                      = int(config['options']['left_tss_flank'])
 bin_size                        = int(config['options']['bin_size'])
 sample_stems                    = config['samples']
-
 
 # genome linked artifacts
 genome_files                    = config["references"][genome]
@@ -22,44 +23,47 @@ tss_interval                    = genome_files['tss_interval']
 gap                             = genome_files.get("gap", None)
 blacklist                       = genome_files.get("blacklist", None)
 
-
 # directories
 data_dir                         = config["project"]["datapath"]
 all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
-bin_dir                          = config['binpath']
+bin_dir                          = join(output_dir, 'workflow', 'scripts')
 tmpdir                           = config['options']['tmp_dir']
-bam_dir                          = os.path.join(output_dir, 'bams')
-coverage_dir                     = os.path.join(output_dir, 'coverage')
-fragment_length_dir              = os.path.join(output_dir, 'frag_length_bins')
-fragment_length_int_dir          = os.path.join(output_dir, 'frag_length_intervals')
-end_motifs_dir                   = os.path.join(output_dir, 'end_motifs')
-interval_end_motifs_dir          = os.path.join(output_dir, 'interval_end_motifs')
-mds_dir                          = os.path.join(output_dir, 'mds')
-delfi_dir                        = os.path.join(output_dir, 'delfi')
-wps_dir                          = os.path.join(output_dir, 'wps')
-adjust_wps_dir                   = os.path.join(output_dir, 'adjust_wps')
-cleavage_profile_dir             = os.path.join(output_dir, 'cleavage_profile')
-
+bam_dir                          = join(output_dir, 'bams')
+coverage_dir                     = join(output_dir, 'coverage')
+fragment_length_dir              = join(output_dir, 'frag_length_bins')
+fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
+end_motifs_dir                   = join(output_dir, 'end_motifs')
+interval_end_motifs_dir          = join(output_dir, 'interval_end_motifs')
+mds_dir                          = join(output_dir, 'mds')
+delfi_dir                        = join(output_dir, 'delfi')
+wps_dir                          = join(output_dir, 'wps')
+adjust_wps_dir                   = join(output_dir, 'adjust_wps')
+cleavage_profile_dir             = join(output_dir, 'cleavage_profile')
 
 # default resources
-default_threads                  = config['cluster']['__default__']['threads']
+default_threads                  = cluster['__default__']['threads']
 
 
 rule stage_bams:
     input:
         all_input_files
     output:
-        expand(os.path.join(bam_dir, "{sample}.sorted.bam"), sample=sample_stems)
+        expand(join(bam_dir, "{sample}.sorted.bam"), sample=sample_stems)
     container: 
         config['images']['finaletoolkit']
-    threads: 
-        config["cluster"]["stage_bams"].get("threads", default_threads)
+    resources:
+        partition = allocated("partition", "stage_bams", cluster),
+        mem       = allocated("mem",  "stage_bams", cluster),
+        time      = allocated("time", "stage_bams", cluster),
+        gres      = allocated("gres", "stage_bams", cluster),
+    threads:
+        int(allocated("threads", "stage_bams", cluster))
     params:
         rname                   = "stage_bams",
         bam_dir                  = bam_dir,
-        python_script            = os.path.join(bin_dir, 'stage_input_files.py'),
-        memory                   = str(config["cluster"]["stage_bams"].get("mem", default_threads)).replace('G' ,'')
+        python_script            = join(bin_dir, 'stage_input_files.py'),
+        memory                   = str(allocated("mem",  "stage_bams", cluster)).replace('G' ,'')
     shell:
         dedent("""
         python {params.python_script} \\
@@ -72,11 +76,16 @@ rule stage_bams:
 
 rule coverage:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bed                     = os.path.join(coverage_dir, "{sid}_coverage.bed")
-    threads: 
-        config["cluster"]["coverage"].get("threads", default_threads)
+        bed                     = join(coverage_dir, "{sid}_coverage.bed")
+    resources:
+        partition = allocated("partition", "coverage", cluster),
+        mem       = allocated("mem",  "coverage", cluster),
+        time      = allocated("time", "coverage", cluster),
+        gres      = allocated("gres", "coverage", cluster),
+    threads:
+        int(allocated("threads", "coverage", cluster))
     container: 
         config['images']['finaletoolkit']
     params:
@@ -102,14 +111,19 @@ rule coverage:
 
 rule frag_length_bins:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        tsv                     = os.path.join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".tsv"),
-        png                     = os.path.join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".png")
+        tsv                     = join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".tsv"),
+        png                     = join(fragment_length_dir, "{sid}_frag_bin" + str(bin_size) + ".png")
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "frag_length_bins", cluster),
+        mem       = allocated("mem",  "frag_length_bins", cluster),
+        time      = allocated("time", "frag_length_bins", cluster),
+        gres      = allocated("gres", "frag_length_bins", cluster),
     threads:
-        config["cluster"]["frag_length_bins"].get("threads", default_threads)
+        int(allocated("threads", "frag_length_bins", cluster))
     params:
         rname                   = "frag_length_bins",
         bin_size                = str(bin_size),
@@ -132,13 +146,18 @@ rule frag_length_bins:
 
 rule frag_length_intervals:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bed                     = os.path.join(fragment_length_int_dir, "{sid}_frag_interval.bed")
+        bed                     = join(fragment_length_int_dir, "{sid}_frag_interval.bed")
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "frag_length_intervals", cluster),
+        mem       = allocated("mem",  "frag_length_intervals", cluster),
+        time      = allocated("time", "frag_length_intervals", cluster),
+        gres      = allocated("gres", "frag_length_intervals", cluster),
     threads:
-        config["cluster"]["frag_length_intervals"].get("threads", default_threads)
+        int(allocated("threads", "frag_length_intervals", cluster))
     params:
         rname                   = "frag_length_intervals",
         min_len                 = min_fragment_len,
@@ -160,13 +179,18 @@ rule frag_length_intervals:
 
 rule end_motifs:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        tsv                     = os.path.join(end_motifs_dir, "{sid}_endmotif.tsv"),
+        tsv                     = join(end_motifs_dir, "{sid}_endmotif.tsv"),
     container: 
         config['images']['finaletoolkit']
-    threads: 
-        config["cluster"]["end_motifs"].get("threads", default_threads)
+    resources:
+        partition = allocated("partition", "end_motifs", cluster),
+        mem       = allocated("mem",  "end_motifs", cluster),
+        time      = allocated("time", "end_motifs", cluster),
+        gres      = allocated("gres", "end_motifs", cluster),
+    threads:
+        int(allocated("threads", "end_motifs", cluster))
     params:
         rname                   = "end_motifs",
         min_len                 = min_fragment_len,
@@ -188,13 +212,18 @@ rule end_motifs:
 
 rule interval_end_motifs:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        tsv                     = os.path.join(interval_end_motifs_dir, "{sid}_endmotif_interval.tsv"),
+        tsv                     = join(interval_end_motifs_dir, "{sid}_endmotif_interval.tsv"),
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "interval_end_motifs", cluster),
+        mem       = allocated("mem",  "interval_end_motifs", cluster),
+        time      = allocated("time", "interval_end_motifs", cluster),
+        gres      = allocated("gres", "interval_end_motifs", cluster),
     threads:
-        config["cluster"]["interval_end_motifs"].get("threads", default_threads)
+        int(allocated("threads", "interval_end_motifs", cluster))
     params:
         rname                   = "interval_end_motifs",
         ref2bit                 = ref2bit,
@@ -222,13 +251,18 @@ rule interval_end_motifs:
 
 rule mds:
     input:
-        endmotif                = os.path.join(end_motifs_dir, "{sid}_endmotif.tsv"),
+        endmotif                = join(end_motifs_dir, "{sid}_endmotif.tsv"),
     output:
-        tsv                     = os.path.join(mds_dir, "{sid}_mds.tsv"),
+        tsv                     = join(mds_dir, "{sid}_mds.tsv"),
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "mds", cluster),
+        mem       = allocated("mem",  "mds", cluster),
+        time      = allocated("time", "mds", cluster),
+        gres      = allocated("gres", "mds", cluster),
     threads:
-        config["cluster"]["mds"].get("threads", default_threads)
+        int(allocated("threads", "mds", cluster))
     params:
         rname                   = "mds",
         sid                     = "{sid}"
@@ -242,13 +276,18 @@ rule mds:
 
 rule delfi:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bed                     = os.path.join(delfi_dir, "{sid}_delfi.bed"),
+        bed                     = join(delfi_dir, "{sid}_delfi.bed"),
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "delfi", cluster),
+        mem       = allocated("mem",  "delfi", cluster),
+        time      = allocated("time", "delfi", cluster),
+        gres      = allocated("gres", "delfi", cluster),
     threads:
-        config["cluster"]["delfi"].get("threads", default_threads)
+        int(allocated("threads", "delfi", cluster))
     params:
         rname                   = "delfi",
         chrom_sizes             = chrom_sizes,
@@ -269,13 +308,18 @@ rule delfi:
 
 rule wps:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bw                      = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
+        bw                      = join(wps_dir, "{sid}_wps_out_tss.bw")
     container: 
         config['images']['finaletoolkit']
-    threads: 
-        config["cluster"]["wps"].get("threads", default_threads)
+    resources:
+        partition = allocated("partition", "wps", cluster),
+        mem       = allocated("mem",  "wps", cluster),
+        time      = allocated("time", "wps", cluster),
+        gres      = allocated("gres", "wps", cluster),
+    threads:
+        int(allocated("threads", "wps", cluster))
     params:
         rname                   = "wps",
         intervals               = split_interval,
@@ -297,13 +341,18 @@ rule wps:
 
 rule adjust_wps:
     input:
-        wps_bw                  = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
+        wps_bw                  = join(wps_dir, "{sid}_wps_out_tss.bw")
     output:
-        bw                      = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
+        bw                      = join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
     container: 
         config['images']['finaletoolkit']
-    threads: 
-        config["cluster"]["adjust_wps"].get("threads", default_threads)
+    resources:
+        partition = allocated("partition", "adjust_wps", cluster),
+        mem       = allocated("mem",  "adjust_wps", cluster),
+        time      = allocated("time", "adjust_wps", cluster),
+        gres      = allocated("gres", "adjust_wps", cluster),
+    threads:
+        int(allocated("threads", "adjust_wps", cluster))
     params:
         rname                   = "adjust_wps",
         intervals               = split_interval,
@@ -324,13 +373,18 @@ rule adjust_wps:
 
 rule cleavage_profile:
     input:
-        bam                     = os.path.join(bam_dir, "{sid}.sorted.bam"),
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
     output:
-        bw                      = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw")
+        bw                      = join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw")
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "cleavage_profile", cluster),
+        mem       = allocated("mem",  "cleavage_profile", cluster),
+        time      = allocated("time", "cleavage_profile", cluster),
+        gres      = allocated("gres", "cleavage_profile", cluster),
     threads:
-        config["cluster"]["cleavage_profile"].get("threads", default_threads)
+        int(allocated("threads", "cleavage_profile", cluster))
     params:
         rname                   = "cleavage_profile",
         l                       = left_flank,
@@ -356,13 +410,18 @@ rule cleavage_profile:
 
 rule agg_wps:
     input:
-        bw                      = os.path.join(wps_dir, "{sid}_wps_out_tss.bw")
+        bw                      = join(wps_dir, "{sid}_wps_out_tss.bw")
     output:
-        wig                     = os.path.join(wps_dir, "{sid}_wps_out_tss_aggr.wig")
+        wig                     = join(wps_dir, "{sid}_wps_out_tss_aggr.wig")
     container: 
         config['images']['finaletoolkit']
-    threads: 
-        config["cluster"]["agg_wps"].get("threads", default_threads)
+    resources:
+        partition = allocated("partition", "agg_wps", cluster),
+        mem       = allocated("mem",  "agg_wps", cluster),
+        time      = allocated("time", "agg_wps", cluster),
+        gres      = allocated("gres", "agg_wps", cluster),
+    threads:
+        int(allocated("threads", "agg_wps", cluster))
     params:
         rname                   = "agg_wps",
         tss_interval            = tss_interval
@@ -377,13 +436,18 @@ rule agg_wps:
 
 rule agg_adjust_wps:
     input:
-        bw                      = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
+        bw                      = join(adjust_wps_dir, "{sid}_wps_out_tss_adjusted.bw")
     output:
-        wig                     = os.path.join(adjust_wps_dir, "{sid}_wps_out_tss_adj_aggr.wig")
+        wig                     = join(adjust_wps_dir, "{sid}_wps_out_tss_adj_aggr.wig")
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "agg_adjust_wps", cluster),
+        mem       = allocated("mem",  "agg_adjust_wps", cluster),
+        time      = allocated("time", "agg_adjust_wps", cluster),
+        gres      = allocated("gres", "agg_adjust_wps", cluster),
     threads:
-        config["cluster"]["agg_adjust_wps"].get("threads", default_threads)
+        int(allocated("threads", "agg_adjust_wps", cluster))
     params:
         rname                   = "agg_adjust_wps",
         tss_interval            = tss_interval
@@ -399,13 +463,18 @@ rule agg_adjust_wps:
 
 rule agg_cleavage_profile:
     input:
-        bw                      = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw"),
+        bw                      = join(cleavage_profile_dir, "{sid}_cleavage_profile_tss.bw"),
     output:
-        wig                     = os.path.join(cleavage_profile_dir, "{sid}_cleavage_profile_aggr.wig"),
+        wig                     = join(cleavage_profile_dir, "{sid}_cleavage_profile_aggr.wig"),
     container: 
         config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "agg_cleavage_profile", cluster),
+        mem       = allocated("mem",  "agg_cleavage_profile", cluster),
+        time      = allocated("time", "agg_cleavage_profile", cluster),
+        gres      = allocated("gres", "agg_cleavage_profile", cluster),
     threads:
-        config["cluster"]["agg_cleavage_profile"].get("threads", default_threads)
+        int(allocated("threads", "agg_cleavage_profile", cluster))
     params:
         rname                   = "agg_cleavage_profile",
         tss_interval            = tss_interval     
