@@ -16,11 +16,12 @@ RUN apt-get update \
     && apt-get -y upgrade
 # samtools/bedtools for sort, markdup, proper-pair filtering and indexing;
 # build tooling to fetch the pinned bwa-mem2 release binary.
-RUN apt-get install -y wget git vim samtools bedtools
+RUN apt-get install -y wget git vim samtools bedtools bzip2
 # Pin bwa-mem2 to match the version used to build the reference index
 # (config/genome.json -> bwamem2_index). x86_64 prebuilt release binary.
-RUN mkdir /opt2; cd /opt2; \
-    wget -q https://github.com/bwa-mem2/bwa-mem2/releases/download/v2.2.1/bwa-mem2-2.2.1_x64-linux.tar.bz2 \
-    && tar -xjf bwa-mem2-2.2.1_x64-linux.tar.bz2 \
-    && mv bwa-mem2-2.2.1_x64-linux/bwa-mem2* /usr/local/bin/ \
-    && cd /; rm -rf /opt2
+ARG BWAMEM2_VERSION=2.2.1
+RUN mkdir /opt2 && cd /opt2 \
+    && wget https://github.com/bwa-mem2/bwa-mem2/releases/download/v${BWAMEM2_VERSION}/bwa-mem2-${BWAMEM2_VERSION}_x64-linux.tar.bz2 \
+    && tar -xjf bwa-mem2-${BWAMEM2_VERSION}_x64-linux.tar.bz2 \
+    && mv bwa-mem2-${BWAMEM2_VERSION}_x64-linux/bwa-mem2* /usr/local/bin/ \
+    && cd / && rm -rf /opt2
