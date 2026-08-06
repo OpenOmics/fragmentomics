@@ -104,6 +104,8 @@ delfi_dir                        = join(output_dir, 'delfi')
 wps_dir                          = join(output_dir, 'wps')
 adjust_wps_dir                   = join(output_dir, 'adjust_wps')
 cleavage_profile_dir             = join(output_dir, 'cleavage_profile')
+qc_dir                           = join(output_dir, 'qc')
+multiqc_dir                      = join(output_dir, 'multiqc')
 
 # Define outputs
 all_outputs = []
@@ -116,11 +118,29 @@ all_outputs.extend(
 
 all_outputs.extend(
     expand(
-        join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"), 
-        sample=samples, 
+        join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"),
+        sample=samples,
         bin_size=[bin_size]
     )
 )
+
+# Project-level QC. The merged coverage workbook is a gather over every
+# per-sample coverage bed, and the MultiQC report is a gather over the
+# per-sample samtools reports, so requesting these two targets pulls in the
+# coverage and bam_stats rules for all samples.
+all_outputs.append(join(coverage_dir, "coverage_summary.xlsx"))
+all_outputs.append(join(multiqc_dir, "multiqc_report.html"))
+
+# The bam input path validates each staged alignment against the selected
+# genome's sequence dictionary and subsets it to the shared contigs. The
+# per-sample report is requested explicitly so the record is produced even
+# when every downstream target is already up to date. Genomes without a
+# "dict" entry in config/genome.json have nothing to validate against, so the
+# rule is not defined and its report is not a target.
+if config["project"]["input_type"] != "illumina_fastq" and genome_files.get("dict"):
+    all_outputs.extend(
+        expand(join(qc_dir, "{sample}.contig_validation.txt"), sample=samples)
+    )
 
 if split_interval:
     all_outputs.extend(

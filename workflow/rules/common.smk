@@ -22,14 +22,31 @@ tss                             = genome_files['tss']
 tss_interval                    = genome_files['tss_interval']
 gap                             = genome_files.get("gap", None)
 blacklist                       = genome_files.get("blacklist", None)
+# Picard-style sequence dictionary, used by the bam input path to check that
+# staged alignments were made against the selected genome build.
+sequence_dict                   = genome_files.get("dict", None)
+# FastQ alignment references (only used by the illumina_fastq input path)
+reference_fa                    = genome_files.get("reference_fa", None)
+bwamem2_index                   = genome_files.get("bwamem2_index", None)
+
+# Resolved input type recorded by the frontend (src/run.py). One input type is
+# enforced per run, so the workflow either aligns FastQs (illumina_fastq) or
+# stages ready-made BAMs (bam); both converge on bams/{sample}.sorted.bam.
+input_type                      = config["project"]["input_type"]
 
 # directories
 data_dir                         = config["project"]["datapath"]
 all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
+inputs_dir                       = join(output_dir, 'inputs')
 bin_dir                          = join(output_dir, 'workflow', 'scripts')
 tmpdir                           = config['options']['tmp_dir']
 bam_dir                          = join(output_dir, 'bams')
+# Landing area for the bam input path. stage_bams sorts user BAMs here, then
+# filter_reference_contigs subsets them into bam_dir. Kept as a sibling of
+# bam_dir rather than a subdirectory because Snakemake wildcards match across
+# path separators, so bams/staged/x would also satisfy bams/{sid}.
+staged_bam_dir                   = join(output_dir, 'staged_bams')
 coverage_dir                     = join(output_dir, 'coverage')
 fragment_length_dir              = join(output_dir, 'frag_length_bins')
 fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
@@ -40,38 +57,179 @@ delfi_dir                        = join(output_dir, 'delfi')
 wps_dir                          = join(output_dir, 'wps')
 adjust_wps_dir                   = join(output_dir, 'adjust_wps')
 cleavage_profile_dir             = join(output_dir, 'cleavage_profile')
+qc_dir                           = join(output_dir, 'qc')
+multiqc_dir                      = join(output_dir, 'multiqc')
+
+# project-level (non scatter-per-sample) outputs
+coverage_xlsx                    = join(coverage_dir, 'coverage_summary.xlsx')
+multiqc_report                   = join(multiqc_dir, 'multiqc_report.html')
 
 # default resources
 default_threads                  = cluster['__default__']['threads']
 
 
-rule stage_bams:
-    input:
-        all_input_files
-    output:
-        expand(join(bam_dir, "{sample}.sorted.bam"), sample=sample_stems)
-    container: 
-        config['images']['finaletoolkit']
-    resources:
-        partition = allocated("partition", "stage_bams", cluster),
-        mem       = allocated("mem",  "stage_bams", cluster),
-        time      = allocated("time", "stage_bams", cluster),
-        gres      = allocated("gres", "stage_bams", cluster),
-    threads:
-        int(allocated("threads", "stage_bams", cluster))
-    params:
-        rname                   = "stage_bams",
-        bam_dir                  = bam_dir,
-        python_script            = join(bin_dir, 'stage_input_files.py'),
-        memory                   = str(allocated("mem",  "stage_bams", cluster)).replace('G' ,'')
-    shell:
-        dedent("""
-        python {params.python_script} \\
-            --files {input} \\
-            --output {params.bam_dir} \\
-            --threads {threads} \\
-            --memory {params.memory}
-        """)
+# Input staging. Exactly one input type runs per pipeline invocation (the
+# frontend, src/run.py, auto-detects and enforces a single type). Both branches
+# below produce the same target, bams/{sample}.sorted.bam, which every
+# downstream finaletoolkit rule consumes:
+#   • illumina_fastq -> align_fastq: bwa-mem2 alignment + dedup + proper-pair
+#     filtering (full pipeline work).
+#   • bam            -> stage_bams:  sort/index ready-made alignments (full
+#     pipeline work minus alignment).
+if input_type == "illumina_fastq":
+
+    rule align_fastq:
+        """
+        Align paired-end Illumina FastQ reads to the reference genome with
+        bwa-mem2, then produce an analysis-ready coordinate-sorted BAM:
+        fixmate -> sort -> markdup (mark duplicates) -> keep only properly
+        paired, primary, mapped, non-duplicate reads. This yields the same
+        bams/{sid}.sorted.bam that the BAM input path stages directly, so all
+        downstream fragmentomics rules are input-type agnostic.
+        @Input:
+            Paired-end FastQ mates (scatter-per-sample), staged by the
+            frontend into the output directory's inputs/ folder.
+        @Output:
+            Coordinate-sorted, indexed analysis BAM.
+        """
+        input:
+            r1                  = join(inputs_dir, "{sid}.R1.fastq.gz"),
+            r2                  = join(inputs_dir, "{sid}.R2.fastq.gz"),
+        output:
+            bam                 = join(bam_dir, "{sid}.sorted.bam"),
+            bai                 = join(bam_dir, "{sid}.sorted.bam.bai"),
+        container:
+            config['images']['bwamem2']
+        resources:
+            partition = allocated("partition", "align_fastq", cluster),
+            mem       = allocated("mem",  "align_fastq", cluster),
+            time      = allocated("time", "align_fastq", cluster),
+            gres      = allocated("gres", "align_fastq", cluster),
+        threads:
+            int(allocated("threads", "align_fastq", cluster))
+        params:
+            rname               = "align_fastq",
+            sid                 = "{sid}",
+            index               = bwamem2_index,
+            # 0x2 (proper pair) kept; 3852 excludes unmapped, mate-unmapped,
+            # secondary, qcfail, duplicate, and supplementary reads.
+            keep_flag           = "2",
+            drop_flag           = "3852",
+            tmpdir              = tmpdir,
+        shell:
+            dedent("""
+            if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+            tmp=$(mktemp -d -p \"{params.tmpdir}\")
+            trap 'rm -rf "${{tmp}}"' EXIT
+
+            bwa-mem2 mem \\
+                -t {threads} \\
+                -R "@RG\\tID:{params.sid}\\tSM:{params.sid}\\tPL:ILLUMINA\\tLB:{params.sid}" \\
+                {params.index} {input.r1} {input.r2} \\
+            | samtools sort -n -@ {threads} -T ${{tmp}}/nsort -O bam - \\
+            | samtools fixmate -m -@ {threads} - - \\
+            | samtools sort -@ {threads} -T ${{tmp}}/psort -O bam - \\
+            | samtools markdup -@ {threads} -T ${{tmp}}/mkdup - - \\
+            | samtools view -b -f {params.keep_flag} -F {params.drop_flag} \\
+                -@ {threads} -o {output.bam} -
+
+            samtools index -@ {threads} {output.bam}
+            """)
+
+else:
+
+    # Where stage_bams writes. When the selected genome ships a sequence
+    # dictionary, staging lands in staged_bam_dir and filter_reference_contigs
+    # produces the canonical bams/{sid}.sorted.bam. Without a dictionary there
+    # is nothing to validate against, so staging writes bam_dir directly and
+    # the filter rule is not defined at all.
+    stage_dir = staged_bam_dir if sequence_dict else bam_dir
+
+    rule stage_bams:
+        input:
+            all_input_files
+        output:
+            bams = expand(join(stage_dir, "{sample}.sorted.bam"), sample=sample_stems),
+            # stage_input_files.py indexes each staged BAM; declaring the
+            # indices lets filter_reference_contigs request regions from them.
+            bais = expand(join(stage_dir, "{sample}.sorted.bam.bai"), sample=sample_stems),
+        container:
+            config['images']['finaletoolkit']
+        resources:
+            partition = allocated("partition", "stage_bams", cluster),
+            mem       = allocated("mem",  "stage_bams", cluster),
+            time      = allocated("time", "stage_bams", cluster),
+            gres      = allocated("gres", "stage_bams", cluster),
+        threads:
+            int(allocated("threads", "stage_bams", cluster))
+        params:
+            rname                   = "stage_bams",
+            bam_dir                  = stage_dir,
+            python_script            = join(bin_dir, 'stage_input_files.py'),
+            memory                   = str(allocated("mem",  "stage_bams", cluster)).replace('G' ,'')
+        shell:
+            dedent("""
+            python {params.python_script} \\
+                --files {input} \\
+                --output {params.bam_dir} \\
+                --threads {threads} \\
+                --memory {params.memory}
+            """)
+
+
+if input_type != "illumina_fastq" and sequence_dict:
+
+    rule filter_reference_contigs:
+        """
+        Verify that a staged BAM was aligned to the selected reference genome
+        and subset it to the contigs the two share.
+
+        Only the @SQ SN (name) and LN (length) fields of the reference
+        sequence dictionary are compared. A .dict records the path of the
+        FastA it was built from in UR and a checksum in M5; neither appears in
+        a typical aligner-produced BAM header, and UR legitimately differs
+        between the reference and the input for the same assembly, so
+        comparing either would raise false mismatches.
+
+        Contigs present in the BAM but not the reference (alt/decoy/patch
+        scaffolds, often several hundred of them) are dropped. A shared contig
+        name with a differing length means the BAM was aligned to a different
+        build entirely, which subsetting cannot repair, so the rule fails.
+        @Input:
+            Staged, coordinate-sorted BAM (scatter-per-sample).
+        @Output:
+            BAM containing only the reference's contigs, plus a report of the
+            comparison.
+        """
+        input:
+            bam                 = join(staged_bam_dir, "{sid}.sorted.bam"),
+            bai                 = join(staged_bam_dir, "{sid}.sorted.bam.bai"),
+            seq_dict            = sequence_dict,
+        output:
+            bam                 = join(bam_dir, "{sid}.sorted.bam"),
+            bai                 = join(bam_dir, "{sid}.sorted.bam.bai"),
+            report              = join(qc_dir, "{sid}.contig_validation.txt"),
+        container:
+            config['images']['finaletoolkit']
+        resources:
+            partition = allocated("partition", "filter_reference_contigs", cluster),
+            mem       = allocated("mem",  "filter_reference_contigs", cluster),
+            time      = allocated("time", "filter_reference_contigs", cluster),
+            gres      = allocated("gres", "filter_reference_contigs", cluster),
+        threads:
+            int(allocated("threads", "filter_reference_contigs", cluster))
+        params:
+            rname                   = "filter_reference_contigs",
+            python_script           = join(bin_dir, 'filter_reference_contigs.py'),
+        shell:
+            dedent("""
+            python {params.python_script} \\
+                --bam {input.bam} \\
+                --dict {input.seq_dict} \\
+                --output {output.bam} \\
+                --report {output.report} \\
+                --threads {threads}
+            """)
 
 
 rule coverage:
@@ -270,7 +428,7 @@ rule mds:
         dedent("""
         mds_score=$(finaletoolkit mds {input.endmotif})
         echo "Sample\tMDS_score" > {output.tsv}
-        echo "{params.sid}\t${{mds_score}}" > {output.tsv}
+        echo "{params.sid}\t${{mds_score}}" >> {output.tsv}
         """)
 
 
@@ -458,6 +616,124 @@ rule agg_adjust_wps:
             -o {output.wig} \\
             --mean \\
             -v
+        """)
+
+
+rule bam_stats:
+    """
+    Collect alignment QC metrics from the analysis BAM with samtools. The
+    three reports (stats, flagstat, idxstats) are all natively parsed by
+    MultiQC, which gives the aggregate report something to summarize
+    regardless of which input path produced the BAM.
+    @Input:
+        Coordinate-sorted, indexed analysis BAM (scatter-per-sample).
+    @Output:
+        samtools stats, flagstat and idxstats reports.
+    """
+    input:
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
+        bai                     = join(bam_dir, "{sid}.sorted.bam.bai"),
+    output:
+        stats                   = join(qc_dir, "{sid}.samtools.stats.txt"),
+        flagstat                = join(qc_dir, "{sid}.flagstat.txt"),
+        idxstats                = join(qc_dir, "{sid}.idxstats.txt"),
+    container:
+        config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "bam_stats", cluster),
+        mem       = allocated("mem",  "bam_stats", cluster),
+        time      = allocated("time", "bam_stats", cluster),
+        gres      = allocated("gres", "bam_stats", cluster),
+    threads:
+        int(allocated("threads", "bam_stats", cluster))
+    params:
+        rname                   = "bam_stats",
+    shell:
+        dedent("""
+        samtools stats -@ {threads} {input.bam} > {output.stats}
+        samtools flagstat -@ {threads} {input.bam} > {output.flagstat}
+        samtools idxstats {input.bam} > {output.idxstats}
+        """)
+
+
+rule merge_coverage_excel:
+    """
+    Merge every per-sample finaletoolkit coverage BED into one Excel
+    workbook: a `summary` sheet of per-sample coverage statistics and a
+    `coverage` sheet holding the merged interval x sample matrix. This is a
+    project-level (gather) rule, so it waits on all samples.
+    @Input:
+        Per-sample coverage BEDs from the coverage rule (gather).
+    @Output:
+        Single Excel workbook summarizing coverage across all samples.
+    """
+    input:
+        beds                    = expand(join(coverage_dir, "{sample}_coverage.bed"), sample=sample_stems),
+    output:
+        xlsx                    = coverage_xlsx,
+    container:
+        config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "merge_coverage_excel", cluster),
+        mem       = allocated("mem",  "merge_coverage_excel", cluster),
+        time      = allocated("time", "merge_coverage_excel", cluster),
+        gres      = allocated("gres", "merge_coverage_excel", cluster),
+    threads:
+        int(allocated("threads", "merge_coverage_excel", cluster))
+    params:
+        rname                   = "merge_coverage_excel",
+        python_script           = join(bin_dir, 'merge_coverage.py'),
+    shell:
+        dedent("""
+        python {params.python_script} \\
+            --beds {input.beds} \\
+            --output {output.xlsx}
+        """)
+
+
+rule multiqc:
+    """
+    Aggregate the per-sample samtools QC reports into a single interactive
+    HTML report. Only the qc/ directory is scanned, so MultiQC does not walk
+    the large bigwig/bed outputs of the fragmentomics rules. The coverage
+    workbook is taken as an input so the report is generated once the
+    project-level coverage gather has finished.
+    @Input:
+        Per-sample samtools stats/flagstat/idxstats reports (gather) and the
+        merged coverage workbook.
+    @Output:
+        MultiQC HTML report.
+    """
+    input:
+        stats                   = expand(join(qc_dir, "{sample}.samtools.stats.txt"), sample=sample_stems),
+        flagstat                = expand(join(qc_dir, "{sample}.flagstat.txt"), sample=sample_stems),
+        idxstats                = expand(join(qc_dir, "{sample}.idxstats.txt"), sample=sample_stems),
+        xlsx                    = coverage_xlsx,
+    output:
+        report                  = multiqc_report,
+        data                    = directory(join(multiqc_dir, "multiqc_report_data")),
+    container:
+        config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "multiqc", cluster),
+        mem       = allocated("mem",  "multiqc", cluster),
+        time      = allocated("time", "multiqc", cluster),
+        gres      = allocated("gres", "multiqc", cluster),
+    threads:
+        int(allocated("threads", "multiqc", cluster))
+    params:
+        rname                   = "multiqc",
+        qc_dir                  = qc_dir,
+        multiqc_dir             = multiqc_dir,
+        # MultiQC appends .html itself, so the report basename is passed
+        # without its extension.
+        report_name             = "multiqc_report",
+    shell:
+        dedent("""
+        multiqc {params.qc_dir} \\
+            --outdir {params.multiqc_dir} \\
+            --filename {params.report_name} \\
+            --force
         """)
 
 

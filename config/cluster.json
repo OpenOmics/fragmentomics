@@ -2,9 +2,9 @@
     "__default__": {
         "partition": "norm",
         "threads": "4",
-        "mem": "8g",
-        "time": "0-04:00:00",
-        "gres": "lscratch:128"
+        "mem": "80000m",
+        "time": "72:00:00",
+        "gres": "lscratch:20"
     },
     "stage_bams": {
         "threads": 48,
@@ -12,10 +12,25 @@
         "time": "12:00:00",
         "partition": "norm"
     },
+    "align_fastq": {
+        "threads": 32,
+        "mem": "200000m",
+        "time": "72:30:00",
+        "gres": "lscratch:200",
+        "partition": "norm"
+    },
+    "filter_reference_contigs": {
+        "threads": 8,
+        "mem": "16G",
+        "time": "08:00:00",
+        "gres": "lscratch:200",
+        "partition": "norm"
+    },
     "coverage": {
-        "threads": 16,
-        "mem": "8G",
-        "time": "04:00:00",
+        "threads": 1,
+        "mem": "32000m",
+        "time": "72:02:00",
+        "gres": "lscratch:200",
         "partition": "norm"
     },
     "frag_length_bins": {
@@ -88,6 +103,36 @@
         "threads": 8,
         "mem": "4G",
         "time": "04:00:00",
+        "partition": "norm"
+    },
+    "_comment_qc": [
+        "QC and project-level report rules. bam_stats is scatter-per-sample;",
+        "merge_coverage_excel and multiqc are gather rules that run once per",
+        "pipeline invocation. Alignment QC is derived from samtools rather",
+        "than Picard because align_bwa, sort_bam, mark_duplicates and",
+        "filter_bam are fused into the single align_fastq rule above, which",
+        "runs bwa-mem2 | sort | fixmate | sort | markdup | view as one pipe",
+        "and therefore emits no separate duplicate-metrics file."
+    ],
+    "bam_stats": {
+        "threads": 4,
+        "mem": "8G",
+        "time": "02:00:00",
+        "gres": "lscratch:20",
+        "partition": "norm"
+    },
+    "merge_coverage_excel": {
+        "threads": 1,
+        "mem": "32000m",
+        "time": "72:02:00",
+        "gres": "lscratch:100",
+        "partition": "norm"
+    },
+    "multiqc": {
+        "threads": 1,
+        "mem": "4000m",
+        "time": "24:30:00",
+        "gres": "lscratch:100",
         "partition": "norm"
     }
 }
