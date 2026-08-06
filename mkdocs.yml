@@ -72,8 +72,8 @@ markdown_extensions:
   - pymdownx.critic
   - pymdownx.details
   - pymdownx.emoji:
-      emoji_index: !!python/name:materialx.emoji.twemoji
-      emoji_generator: !!python/name:materialx.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight
   - pymdownx.inlinehilite
   - pymdownx.keys
@@ -100,6 +100,26 @@ nav:
     - fragmentomics unlock: usage/unlock.md
     - fragmentomics install: usage/install.md
     - fragmentomics cache: usage/cache.md
+  - Pipeline:
+    - Overview: pipeline/overview.md
+    - FastQ alignment: pipeline/fastq-alignment.md
+    - BAM normalization: pipeline/bam-normalization.md
+    - Reference contig filter: pipeline/contig-filter.md
+    - Reference files: pipeline/references.md
+    - Quality control: pipeline/quality-control.md
+  - Analyses:
+    - Overview: analyses/index.md
+    - coverage: analyses/coverage.md
+    - frag-length-bins: analyses/frag-length-bins.md
+    - frag-length-intervals: analyses/frag-length-intervals.md
+    - end-motifs: analyses/end-motifs.md
+    - interval-end-motifs: analyses/interval-end-motifs.md
+    - mds: analyses/mds.md
+    - delfi: analyses/delfi.md
+    - wps: analyses/wps.md
+    - adjust-wps: analyses/adjust-wps.md
+    - cleavage-profile: analyses/cleavage-profile.md
+    - agg-bw: analyses/agg-bw.md
   - FAQ:
     - General Questions: faq/questions.md
   - License: license.md

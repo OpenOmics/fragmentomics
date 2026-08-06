@@ -43,6 +43,21 @@ Each of the following arguments are required. Failure to provide a required argu
 > 
 > ***Example:*** `--input .tests/*.bam`  
 > ***Example:*** `--input .tests/*.R1.fastq.gz .tests/*.R2.fastq.gz`
+>
+> **How each input type is processed.** The pipeline converges both input types
+> on a single coordinate-sorted, indexed BAM per sample
+> (`bams/{sample}.sorted.bam`) that feeds every downstream fragmentomics
+> analysis:
+> - **FastQ input** runs the *full* pipeline. Paired-end reads are aligned to
+>   the selected `--genome` build with `bwa-mem2`, then duplicates are marked
+>   and only properly-paired, primary, mapped, non-duplicate reads are kept
+>   before the analysis steps run. See
+>   [FastQ alignment](../pipeline/fastq-alignment.md).
+> - **BAM input** runs the *full pipeline minus alignment*. Provided alignments
+>   are staged (coordinate-sorted and indexed), checked against the selected
+>   genome build's sequence dictionary, and subset to the contigs the two
+>   share. See [BAM normalization](../pipeline/bam-normalization.md) and
+>   [Reference contig filter](../pipeline/contig-filter.md).
 
 ---  
   `--output OUTPUT`
@@ -59,20 +74,24 @@ Each of the following arguments are required. Failure to provide a required argu
 > *type: string*   
 > *default: hg38*  
 > 
-> Selects the bundled set of reference files the pipeline uses to characterize cfDNA fragmentation features. Choosing a genome build determines which chromosome sizes, 2bit reference sequence, genomic interval and TSS files, and any blacklist or gap files are used throughout the analysis. Vaild options include: `hg38` or `hg19`.
+> Selects the bundled set of reference files the pipeline uses to characterize cfDNA fragmentation features. Choosing a genome build determines which chromosome sizes, 2bit reference sequence, genomic interval and TSS files, and any blacklist or gap files are used throughout the analysis. For FastQ input, it additionally selects the `bwa-mem2` reference index that reads are aligned against. For BAM input, it selects the sequence dictionary the input alignments are validated against. This argument is **required** for both FastQ and BAM input (BAM inputs still need the build to select the analysis references, and are assumed to already be aligned to it). Vaild options include: `hg38` or `hg19`.
+>
+> Every file each build provides, and which analysis uses it, is documented in [Reference files](../pipeline/references.md).
 >  
 > ***Example:*** `--genome hg38` 
 
 ### 2.2 Analysis options
 
-Each of the following arguments are optional, and do not need to be provided. 
+Each of the following arguments are optional, and do not need to be provided. What each analysis does with these values is documented per analysis in the [Analyses](../analyses/index.md) section.
 
   `--fragment-minimum FRAGMENT_MINIMUM`  
 > **Minimum fragment length.**  
 > *type: int*  
 > *default: 50*
 > 
-> Minimum fragment length, in base pairs. Fragments shorter than this length are excluded from the fragmentation analyses, including coverage, fragment-length bins and intervals, end motifs, DELFI, and cleavage profiles.
+> Minimum fragment length, in base pairs. Fragments shorter than this length are excluded from the fragmentation analyses: [coverage](../analyses/coverage.md), [fragment-length bins](../analyses/frag-length-bins.md) and [intervals](../analyses/frag-length-intervals.md), [end motifs](../analyses/end-motifs.md) and [interval end motifs](../analyses/interval-end-motifs.md), and [cleavage profiles](../analyses/cleavage-profile.md).
+>
+> Two analyses do not use this value: [`wps`](../analyses/wps.md) uses a fixed 120–180 bp window (the definition of L-WPS), and [`delfi`](../analyses/delfi.md) partitions short from long internally.
 > 
 > ***Example:*** `--min 50`
 
@@ -82,7 +101,7 @@ Each of the following arguments are optional, and do not need to be provided.
 > *type: int*  
 > *default: 500*
 > 
-> Maximum fragment length, in base pairs. Fragments longer than this length are excluded from the fragmentation analyses, including coverage, fragment-length bins and intervals, end motifs, DELFI, and cleavage profiles.
+> Maximum fragment length, in base pairs. Fragments longer than this length are excluded from the same analyses listed under `--fragment-minimum`, and with the same two exceptions. Raise this if you need the dinucleosome and trinucleosome range represented in the fragment-length distribution.
 > 
 > ***Example:*** `--max 500`
 
@@ -92,7 +111,7 @@ Each of the following arguments are optional, and do not need to be provided.
 > *type: int*  
 > *default: 2000*
 > 
-> Size, in base pairs, of the region to include to the left of each transcription start site (TSS) when computing cleavage profiles.
+> Size, in base pairs, of the region to include to the left of each transcription start site (TSS) when computing [cleavage profiles](../analyses/cleavage-profile.md). The TSS reference file holds point positions, so a region has to be built around each one before a profile can be computed. Left and right flanks are set separately, so the window need not be symmetric.
 > 
 > ***Example:*** `--left-tss-flank 2000`
 
@@ -102,7 +121,7 @@ Each of the following arguments are optional, and do not need to be provided.
 > *type: int*  
 > *default: 2000*
 > 
-> Size, in base pairs, of the region to include to the right of each transcription start site (TSS) when computing cleavage profiles.
+> Size, in base pairs, of the region to include to the right of each transcription start site (TSS) when computing [cleavage profiles](../analyses/cleavage-profile.md). Widening this extends the profile further into the gene body, where the downstream nucleosome array is most regular. Note that `cleavage_profile` is the most expensive step in the pipeline, and its cost scales with the total flank width.
 > 
 > ***Example:*** `--right-tss-flank 2000`
 
@@ -112,7 +131,9 @@ Each of the following arguments are optional, and do not need to be provided.
 > *type: int*  
 > *default: 5000*
 > 
-> Interval size, in base pairs, used when computing and adjusting window protection scores (WPS) around transcription start sites.
+> Interval size, in base pairs, used when computing and adjusting [window protection scores](../analyses/wps.md) around transcription start sites. Each TSS is expanded to an interval of this size, centered on the site, and WPS is computed across every base of it. The same value is passed to [`adjust-wps`](../analyses/adjust-wps.md) so the two stages agree.
+>
+> Setting this to `0` also disables the [`frag-length-intervals`](../analyses/frag-length-intervals.md) analysis.
 > 
 > ***Example:*** `--split-interval 5000`
 
@@ -122,7 +143,7 @@ Each of the following arguments are optional, and do not need to be provided.
 > *type: int*  
 > *default: 1*
 > 
-> Bin size, in base pairs, for the fragment-length distribution histogram. This value is also used to name the fragment-length bin output files.
+> Bin size, in base pairs, for the [fragment-length distribution](../analyses/frag-length-bins.md) histogram. At the default of `1`, every distinct fragment length gets its own row, which is what preserves the ~10 bp periodicity in the distribution. This value is also embedded in the fragment-length bin output filenames, so runs at different bin sizes do not overwrite each other.
 > 
 > ***Example:*** `--bin-size 1`
 
@@ -294,3 +315,24 @@ module load singularity snakemake
     --sif-cache /data/OpenOmics/SIFs \
     --mode slurm
 ```
+
+## 4. Results
+
+The `--output` directory holds one subdirectory per analysis, plus project-level QC. The full layout is documented in [Pipeline overview §4](../pipeline/overview.md#4-output-directory-layout); the files to look at first are:
+
+  `multiqc/multiqc_report.html`
+> **Aggregate QC across all samples.** Alignment rates, duplicate rates, insert-size distributions and per-contig read counts, for every sample side by side. See [Quality control](../pipeline/quality-control.md).
+
+---
+  `coverage/coverage_summary.xlsx`
+> **Merged coverage workbook.** A per-sample summary sheet and the full interval × sample coverage matrix.
+
+---
+  `frag_length_bins/{sample}_frag_bin1.png`
+> **Fragment-length histogram.** The fastest per-sample sanity check — look for the ~167 bp mononucleosome peak.
+
+---
+  `qc/{sample}.contig_validation.txt`
+> **Contig validation record** *(BAM input only)*. Which contigs were kept, which were dropped, and how many reads were affected. See [Reference contig filter](../pipeline/contig-filter.md).
+
+Each analysis output is documented on its own page under [Analyses](../analyses/index.md).
