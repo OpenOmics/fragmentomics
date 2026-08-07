@@ -256,13 +256,13 @@ rule coverage:
         finaletoolkit \\
             coverage {input.bam} {params.intervals} \\
             -n \\
-            --scale 1e6 \\
+            --scale-factor 1000000 \\
             -q 30 \\
-            -min {params.min_len} \\
-            -max {params.max_len} \\
-            -p any \\
+            --min-length {params.min_len} \\
+            --max-length {params.max_len} \\
+            --intersect-policy any \\
             -o {output.bed} \\
-            -w {threads} \\
+            -t {threads} \\
             -v
         """)
 
@@ -293,11 +293,11 @@ rule frag_length_bins:
             frag-length-bins {input.bam} \\
             -q 30 \\
             --bin-size {params.bin_size} \\
-            -min {params.min_len} \\
-            -max {params.max_len} \\
+            --min-length {params.min_len} \\
+            --max-length {params.max_len} \\
             -p midpoint \\
             -o {output.tsv} \\
-            --histogram-path {output.png} \\
+            --histogram {output.png} \\
             -v
         """)
 
@@ -326,11 +326,11 @@ rule frag_length_intervals:
         finaletoolkit \\
             frag-length-intervals {input.bam} {params.intervals} \\
             -q 30 \\
-            -min {params.min_len} \\
-            -max {params.max_len} \\
-            -p any \\
+            --min-length {params.min_len} \\
+            --max-length {params.max_len} \\
+            --intersect-policy any \\
             -o {output.bed} \\
-            -w {threads} \\
+            -t {threads} \\
             -v
         """)
 
@@ -359,11 +359,10 @@ rule end_motifs:
         finaletoolkit \\
             end-motifs {input.bam} {params.ref2bit} \\
             -q 30 \\
-            -k 4 \\
-            -min {params.min_len} \\
-            -max {params.max_len} \\
+            --min-length {params.min_len} \\
+            --max-length {params.max_len} \\
             -o {output.tsv} \\
-            -w {threads} \\
+            -t {threads} \\
             -v
         """)
 
@@ -398,11 +397,10 @@ rule interval_end_motifs:
         finaletoolkit \\
             interval-end-motifs {input.bam} {params.ref2bit} {params.intervals} \\
             -q 30 \\
-            -k 4 \\
-            -min {params.min_len} \\
-            -max {params.max_len} \\
+            --min-length {params.min_len} \\
+            --max-length {params.max_len} \\
             -o {output.tsv} \\
-            -w {threads} \\
+            -t {threads} \\
             -v
         """)
 
@@ -451,17 +449,17 @@ rule delfi:
         chrom_sizes             = chrom_sizes,
         ref2bit                 = ref2bit,
         intervals               = intervals,
-        blacklist_cmd           = f"--blacklist-file {blacklist} " if blacklist else "",
-        gap_cmd                 = f"-g {gap}" if gap else ""
+        blacklist_cmd           = f" --blacklist {blacklist}" if blacklist else "",
+        gap_cmd                 = f" -g {gap}" if gap else ""
     shell:
-        """
+        dedent("""
         finaletoolkit delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {params.intervals} \\
-            -q 30 {params.blacklist_cmd}{params.gap_cmd} \\
+            -q 30{params.blacklist_cmd}{params.gap_cmd} \\
             -o {output.bed} \\
-            -w {threads} \\
+            -t {threads} \\
             -v \\
             --no-merge-bins
-        """
+        """)
 
 
 rule wps:
@@ -488,11 +486,11 @@ rule wps:
             wps {input.bam} {params.tss} \\
             -i {params.intervals} \\
             -W 120 \\
-            -min 120 \\
-            -max 180 \\
+            --min-length 120 \\
+            --max-length 180 \\
             -q 30 \\
             -o {output.bw} \\
-            -w {threads} \\
+            -t {threads} \\
             -v
         """
 
@@ -517,16 +515,16 @@ rule adjust_wps:
         tss_interval            = tss_interval,
         chrom_sizes             = chrom_sizes
     shell:
-        """
+        dedent("""
         finaletoolkit \\
             adjust-wps {input.wps_bw} {params.tss_interval} {params.chrom_sizes} \\
             -o {output.bw} \\
             -i {params.intervals} \\
             -m 200 \\
-            -S \\
             --subtract-edges \\
+            --no-savgol \\
             -v
-        """
+        """)
 
 
 rule cleavage_profile:
@@ -556,12 +554,12 @@ rule cleavage_profile:
         finaletoolkit \\
             cleavage-profile {input.bam} {params.tss} {params.chrom_sizes} \\
             -o {output.bw} \\
-            -l {params.l} \\
-            -r {params.r} \\
+            --pad-left {params.l} \\
+            --pad-right {params.r} \\
             -q 30 \\
-            -min {params.min_len} \\
-            -max {params.max_len} \\
-            -w {threads} \\
+            --min-length {params.min_len} \\
+            --max-length {params.max_len} \\
+            -t {threads} \\
             -v
         """)
 
