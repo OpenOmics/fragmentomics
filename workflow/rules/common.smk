@@ -122,7 +122,7 @@ if input_type == "illumina_fastq":
             tmp=$(mktemp -d -p \"{params.tmpdir}\")
             trap 'rm -rf "${{tmp}}"' EXIT
 
-            bwa-mem2 mem \\
+            bwa-mem2.avx2 mem \\
                 -t {threads} \\
                 -R "@RG\\tID:{params.sid}\\tSM:{params.sid}\\tPL:ILLUMINA\\tLB:{params.sid}" \\
                 {params.index} {input.r1} {input.r2} \\
