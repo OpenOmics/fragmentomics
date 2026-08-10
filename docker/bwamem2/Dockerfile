@@ -15,8 +15,11 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
 RUN apt-get update \
     && apt-get -y upgrade
 # samtools/bedtools for sort, markdup, proper-pair filtering and indexing;
-# build tooling to fetch the pinned bwa-mem2 release binary.
-RUN apt-get install -y wget git vim samtools bedtools bzip2
+# build tooling to fetch the pinned bwa-mem2 release binary; python3 to run
+# workflow/scripts/python_cpu_arch.py, which picks the bwa-mem2 SIMD variant
+# matching the CPU of the node the alignment actually runs on.
+RUN apt-get install -y wget git vim samtools bedtools bzip2 python3-minimal
+RUN ln -s /usr/bin/python3 /usr/bin/python
 # Pin bwa-mem2 to match the version used to build the reference index
 # (config/genome.json -> bwamem2_index). x86_64 prebuilt release binary.
 ARG BWAMEM2_VERSION=2.2.1
