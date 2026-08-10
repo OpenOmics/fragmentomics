@@ -3,7 +3,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 LABEL maintainer="Skyler Kuhn <skyler.kuhn@nih.gov>, Ryan Routsong <routsongrm@nih.gov>" \
     base_image="ubuntu:22.04" \
-    version="0.0.1"   \
+    version="0.0.2"   \
     software="fragmentomics-bwamem2" \
     about.summary="bwa-mem2 + samtools aligner image for the fragmentomics FastQ input path" \
     about.home="https://github.com/OpenOmics/fragmentomics" \

@@ -86,6 +86,15 @@ if input_type == "illumina_fastq":
         paired, primary, mapped, non-duplicate reads. This yields the same
         bams/{sid}.sorted.bam that the BAM input path stages directly, so all
         downstream fragmentomics rules are input-type agnostic.
+
+        bwa-mem2 ships one binary per SIMD instruction set rather than a single
+        portable executable, so the binary to run is resolved at runtime by
+        python_cpu_arch.py (avx2 -> sse4.2 -> sse4.1, falling back to the
+        upstream `bwa-mem2` dispatcher shim; avx512bw is deliberately never
+        selected). Detection runs in the shell block rather than at DAG-build
+        time because the submitting host and the compute node need not share a
+        CPU generation, and a binary built for absent instructions dies with
+        SIGILL.
         @Input:
             Paired-end FastQ mates (scatter-per-sample), staged by the
             frontend into the output directory's inputs/ folder.
@@ -111,6 +120,7 @@ if input_type == "illumina_fastq":
             rname               = "align_fastq",
             sid                 = "{sid}",
             index               = bwamem2_index,
+            arch_script         = join(bin_dir, 'python_cpu_arch.py'),
             # 0x2 (proper pair) kept; 3852 excludes unmapped, mate-unmapped,
             # secondary, qcfail, duplicate, and supplementary reads.
             keep_flag           = "2",
@@ -118,11 +128,15 @@ if input_type == "illumina_fastq":
             tmpdir              = tmpdir,
         shell:
             dedent("""
+            # Resolve the bwa-mem2 build matching this node's instruction set
+            # before doing any work, so an unsupported CPU fails immediately.
+            bwa_bin=$(python {params.arch_script}) || exit 1
+
             if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
             tmp=$(mktemp -d -p \"{params.tmpdir}\")
             trap 'rm -rf "${{tmp}}"' EXIT
 
-            bwa-mem2 mem \\
+            \"${{bwa_bin}}\" mem \\
                 -t {threads} \\
                 -R "@RG\\tID:{params.sid}\\tSM:{params.sid}\\tPL:ILLUMINA\\tLB:{params.sid}" \\
                 {params.index} {input.r1} {input.r2} \\

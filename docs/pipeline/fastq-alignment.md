@@ -31,7 +31,7 @@ Aligning to a build also selects the reference set used by the analysis steps. S
 The step is a single fused pipe — no intermediate BAM is written to disk between stages, which is what keeps the disk footprint and I/O of an alignment run manageable:
 
 ```text
-bwa-mem2 mem -t <threads> -R "@RG\tID:<sample>\tSM:<sample>\tPL:ILLUMINA\tLB:<sample>" \
+${bwa_bin} mem -t <threads> -R "@RG\tID:<sample>\tSM:<sample>\tPL:ILLUMINA\tLB:<sample>" \
     <bwamem2_index> <sample>.R1.fastq.gz <sample>.R2.fastq.gz
   │
   ├─► samtools sort -n      query-name sort, required by fixmate
@@ -44,17 +44,44 @@ bwa-mem2 mem -t <threads> -R "@RG\tID:<sample>\tSM:<sample>\tPL:ILLUMINA\tLB:<sa
     bams/<sample>.sorted.bam   (+ .bai)
 ```
 
-### 3.1 Read groups
+### 3.1 Choosing the `bwa-mem2` binary
+
+`bwa-mem2` is not distributed as one portable executable. The upstream release ships a separate binary per SIMD instruction set — `bwa-mem2.avx2`, `bwa-mem2.sse42`, `bwa-mem2.sse41` and others — each compiled for instructions that a CPU lacking them cannot execute at all. Running the wrong one does not degrade gracefully; it dies with `SIGILL` (illegal instruction).
+
+So the binary is not hardcoded. The step's first action is to resolve `${bwa_bin}` by running `workflow/scripts/python_cpu_arch.py`, which reads the `flags` line of `/proc/cpuinfo` and prints the best-supported variant:
+
+| Priority | CPU flag | Binary |
+|---------|----------|--------|
+| 1 | `avx2` | `bwa-mem2.avx2` |
+| 2 | `sse4_2` | `bwa-mem2.sse42` |
+| 3 | `sse4_1` | `bwa-mem2.sse41` |
+| fallback | — | `bwa-mem2` (upstream dispatcher shim, decides for itself at runtime) |
+
+Two properties of this are deliberate:
+
+- **AVX-512 is never selected**, even on a CPU that advertises `avx512bw`. The upstream `bwa-mem2.avx512bw` binary has a long history of segfaults on both Intel and AMD parts, plus an AMD Zen–specific failure where the CPU reports `avx512bw` support but the binary takes Intel-tuned paths that fail at runtime (bwa-mem2 issues [#50](https://github.com/bwa-mem2/bwa-mem2/issues/50), [#112](https://github.com/bwa-mem2/bwa-mem2/issues/112), [#160](https://github.com/bwa-mem2/bwa-mem2/issues/160), [#199](https://github.com/bwa-mem2/bwa-mem2/issues/199), [#254](https://github.com/bwa-mem2/bwa-mem2/issues/254)). The marginal speedup is not worth a run that crashes hours in.
+- **Detection happens on the compute node, not at submission.** It runs inside the step's shell block rather than when the workflow DAG is built, because in cluster mode the host that submits the job and the node that runs it need not share a CPU generation. Deciding at submit time on a newer login node would hand a partition's older nodes a binary they cannot run.
+
+Detection failures are fatal before any alignment work starts: an unreadable `/proc/cpuinfo`, no CPU flags at all, or a non-x86 CPU (ARM — no `bwa-mem2` variant applies) each abort the step immediately, as does a resolved binary that is somehow absent from `PATH`. The chosen binary is echoed to the step's log, and it is also recorded in the output BAM's `@PG` header line, so after the fact you can confirm which variant produced a given alignment:
+
+```bash
+samtools view -H bams/<sample>.sorted.bam | grep '^@PG'
+# @PG  ID:bwa-mem2  PN:bwa-mem2  VN:2.2.1  CL:bwa-mem2.avx2 mem -t 32 ...
+```
+
+Because the detection script runs inside the aligner container, that image provides `python3` alongside `bwa-mem2` and `samtools`.
+
+### 3.2 Read groups
 
 Each output BAM carries a single `@RG` line with `ID`, `SM` and `LB` all set to the sample name and `PL:ILLUMINA`. The sample name is taken from the FastQ basename, so per-sample provenance survives into the BAM header and into any downstream merge.
 
-### 3.2 Duplicate marking
+### 3.3 Duplicate marking
 
 `samtools markdup` flags duplicates rather than removing them, and the subsequent filter drops them. The `-m` flag on `fixmate` is what makes this possible: it adds the mate-score tag `markdup` needs to pick which copy of a duplicate set to keep.
 
 Because `markdup` runs inside a pipe without `-f`, it does not emit a metrics file. Duplicate rates are instead recovered from `samtools flagstat` by the [`bam_stats`](quality-control.md) step and surfaced in the MultiQC report.
 
-### 3.3 Read filtering
+### 3.4 Read filtering
 
 Only reads passing both of the following survive into the analysis BAM:
 
