@@ -204,7 +204,6 @@ if input_type != "illumina_fastq" and sequence_dict:
         input:
             bam                 = join(staged_bam_dir, "{sid}.sorted.bam"),
             bai                 = join(staged_bam_dir, "{sid}.sorted.bam.bai"),
-            seq_dict            = sequence_dict,
         output:
             bam                 = join(bam_dir, "{sid}.sorted.bam"),
             bai                 = join(bam_dir, "{sid}.sorted.bam.bai"),
@@ -221,11 +220,17 @@ if input_type != "illumina_fastq" and sequence_dict:
         params:
             rname                   = "filter_reference_contigs",
             python_script           = join(bin_dir, 'filter_reference_contigs.py'),
+            # Declared as a param rather than an input, matching every other
+            # reference artifact in this workflow. The dictionary lives on the
+            # shared reference filesystem and is not produced by any rule, so
+            # listing it as an input only makes DAG construction fail wherever
+            # that filesystem is absent (e.g. CI dry-runs).
+            seq_dict                = sequence_dict,
         shell:
             dedent("""
             python {params.python_script} \\
                 --bam {input.bam} \\
-                --dict {input.seq_dict} \\
+                --dict {params.seq_dict} \\
                 --output {output.bam} \\
                 --report {output.report} \\
                 --threads {threads}
