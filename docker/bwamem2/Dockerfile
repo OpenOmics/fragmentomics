@@ -3,12 +3,12 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 LABEL maintainer="Skyler Kuhn <skyler.kuhn@nih.gov>, Ryan Routsong <routsongrm@nih.gov>" \
     base_image="ubuntu:22.04" \
-    version="0.0.3"   \
+    version="0.0.4"   \
     software="fragmentomics-bwamem2" \
     about.summary="bwa-mem2 + samtools aligner image for the fragmentomics FastQ input path" \
     about.home="https://github.com/OpenOmics/fragmentomics" \
     about.documentation="openomics.github.io/fragmentomics/" \
-    about.tags="bwa-mem2 samtools fastqc fastp bedtools alignment fragmentomics"
+    about.tags="bwa-mem2 samtools tabix bgzip fastqc fastp bedtools alignment fragmentomics"
 ENV TZ=America/New_York
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
         && echo $TZ > /etc/timezone
@@ -20,7 +20,12 @@ RUN apt-get update \
 # tooling to fetch the pinned bwa-mem2 release binary; python3 to run
 # workflow/scripts/python_cpu_arch.py, which picks the bwa-mem2 SIMD variant
 # matching the CPU of the node the alignment actually runs on.
-RUN apt-get install -y wget git vim samtools bedtools fastqc fastp bzip2 python3-minimal
+#
+# The tabix package supplies both `tabix` and `bgzip`, which bam_to_bed uses to
+# write its BED as a BGZF stream and index it. Neither ships with the samtools
+# package on Ubuntu, so it has to be requested separately even though all three
+# are built from htslib.
+RUN apt-get install -y wget git vim samtools tabix bedtools fastqc fastp bzip2 python3-minimal
 RUN ln -s /usr/bin/python3 /usr/bin/python
 # Pin bwa-mem2 to match the version used to build the reference index
 # (config/genome.json -> bwamem2_index). x86_64 prebuilt release binary.

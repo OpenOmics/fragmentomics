@@ -5,6 +5,9 @@ resolves to paired-end Illumina FastQ files, the `align_fastq` rule uses this
 image to align reads to the reference genome and produce the same
 `bams/{sample}.sorted.bam` that the BAM input path stages directly.
 
+It is also used by `bam_to_bed`, which runs on **both** input paths: that rule
+needs `bedtools`, `bgzip` and `tabix`, and this is the image that carries them.
+
 Contents:
 - `bwa-mem2` v2.2.1 (paired-end alignment), including the per-instruction-set
   binaries the upstream release ships: `bwa-mem2.avx2`, `bwa-mem2.sse42`,
@@ -14,7 +17,12 @@ Contents:
 - `fastqc` — read QC, run by `align_fastq` on the raw mates before alignment
   and on the analysis BAM after it
 - `fastp` — read preprocessing (trimming/filtering)
-- `bedtools` — interval utilities
+- `bedtools` — interval utilities, including the `bamtobed` conversion behind
+  `bam_to_bed`
+- `tabix` and `bgzip` — BGZF compression and interval indexing for
+  `bam_to_bed`. Both come from Ubuntu's `tabix` package, *not* from `samtools`,
+  so the package has to stay in the install list on its own for `beds/` output
+  to be produced at all
 - `python3` — required by `workflow/scripts/python_cpu_arch.py`, which
   `align_fastq` runs inside this image to pick the SIMD variant matching the
   compute node's CPU (see
@@ -65,8 +73,8 @@ bwa-mem2 index \
 ## Build & push
 
 ```bash
-docker build --platform linux/amd64 -t rroutsong/fragmentomics_bwamem2:0.0.3 .
-docker push rroutsong/fragmentomics_bwamem2:0.0.3
+docker build --platform linux/amd64 -t rroutsong/fragmentomics_bwamem2:0.0.4 .
+docker push rroutsong/fragmentomics_bwamem2:0.0.4
 ```
 
 The image URI is registered in `config/containers.json` under the `bwamem2`
