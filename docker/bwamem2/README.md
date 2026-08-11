@@ -11,6 +11,10 @@ Contents:
   `bwa-mem2.sse41`, `bwa-mem2.avx`, `bwa-mem2.avx512bw`, and the plain
   `bwa-mem2` dispatcher shim
 - `samtools` (fixmate, sort, markdup, proper-pair/mapped filtering, index)
+- `fastqc` — read QC, run by `align_fastq` on the raw mates before alignment
+  and on the analysis BAM after it
+- `fastp` — read preprocessing (trimming/filtering)
+- `bedtools` — interval utilities
 - `python3` — required by `workflow/scripts/python_cpu_arch.py`, which
   `align_fastq` runs inside this image to pick the SIMD variant matching the
   compute node's CPU (see
@@ -61,8 +65,8 @@ bwa-mem2 index \
 ## Build & push
 
 ```bash
-docker build --platform linux/amd64 -t rroutsong/fragmentomics_bwamem2:0.0.2 .
-docker push rroutsong/fragmentomics_bwamem2:0.0.2
+docker build --platform linux/amd64 -t rroutsong/fragmentomics_bwamem2:0.0.3 .
+docker push rroutsong/fragmentomics_bwamem2:0.0.3
 ```
 
 The image URI is registered in `config/containers.json` under the `bwamem2`
