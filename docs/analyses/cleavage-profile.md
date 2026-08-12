@@ -15,7 +15,7 @@ finaletoolkit cleavage-profile bams/{sample}.sorted.bam <tss> <chrom_sizes> \
     -o cleavage_profile/{sample}_cleavage_profile_tss.bw \
     -l <--left-tss-flank> \
     -r <--right-tss-flank> \
-    -q 30 \
+    -q <--mapscore> \
     -min <--fragment-minimum> \
     -max <--fragment-maximum> \
     -w <threads> \
@@ -62,7 +62,7 @@ finaletoolkit cleavage-profile bams/{sample}.sorted.bam <tss> <chrom_sizes> \
 ---
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-min, --min-length` / `-max, --max-length`

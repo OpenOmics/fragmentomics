@@ -14,7 +14,7 @@ Coverage is the basis of the project-level [merged workbook](../pipeline/quality
 finaletoolkit coverage bams/{sample}.sorted.bam <tss_interval> \
     -n \
     --scale 1e6 \
-    -q 30 \
+    -q <--mapscore> \
     -min <--fragment-minimum> \
     -max <--fragment-maximum> \
     -p any \
@@ -53,7 +53,7 @@ finaletoolkit coverage bams/{sample}.sorted.bam <tss_interval> \
 ---
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-min, --min-length` / `-max, --max-length`

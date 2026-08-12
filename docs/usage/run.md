@@ -20,6 +20,7 @@ $ fragmentomics run [--help] [--overwrite-pipeline-template] \
       [--right-tss-flank RIGHT_TSS_FLANK] \
       [--split-interval SPLIT_INTERVAL] \
       [--bin-size BIN_SIZE] \
+      [--mapscore MAPSCORE] [--baseqscore BASEQSCORE] \
       -g {{hg38,hg19}} \
       --input INPUT [INPUT ...] \
       --output OUTPUT
@@ -48,15 +49,16 @@ Each of the following arguments are required. Failure to provide a required argu
 > on a single coordinate-sorted, indexed BAM per sample
 > (`bams/{sample}.sorted.bam`) that feeds every downstream fragmentomics
 > analysis:
-> - **FastQ input** runs the *full* pipeline. Paired-end reads are aligned to
->   the selected `--genome` build with `bwa-mem2`, then duplicates are marked
->   and only properly-paired, primary, mapped, non-duplicate reads are kept
->   before the analysis steps run. See
+> - **FastQ input** runs the *full* pipeline. Paired-end reads are quality
+>   filtered, aligned to the selected `--genome` build with `bwa-mem2`, and
+>   reduced to properly-paired, primary, mapped reads with duplicates marked
+>   (but kept) before the analysis steps run. See
 >   [FastQ alignment](../pipeline/fastq-alignment.md).
 > - **BAM input** runs the *full pipeline minus alignment*. Provided alignments
->   are staged (coordinate-sorted and indexed), checked against the selected
->   genome build's sequence dictionary, and subset to the contigs the two
->   share. See [BAM normalization](../pipeline/bam-normalization.md) and
+>   are staged (quality filtered, coordinate-sorted and indexed), checked
+>   against the selected genome build's sequence dictionary, and subset to the
+>   contigs the two share. See
+>   [BAM normalization](../pipeline/bam-normalization.md) and
 >   [Reference contig filter](../pipeline/contig-filter.md).
 
 ---  
@@ -146,6 +148,32 @@ Each of the following arguments are optional, and do not need to be provided. Wh
 > Bin size, in base pairs, for the [fragment-length distribution](../analyses/frag-length-bins.md) histogram. At the default of `1`, every distinct fragment length gets its own row, which is what preserves the ~10 bp periodicity in the distribution. This value is also embedded in the fragment-length bin output filenames, so runs at different bin sizes do not overwrite each other.
 > 
 > ***Example:*** `--bin-size 1`
+
+---  
+  `--mapscore MAPSCORE`, `--m MAPSCORE`  
+> **Minimum mapping quality.**  
+> *type: int*  
+> *default: 20*
+> 
+> Minimum mapping quality (MAPQ) a read must have to be kept: a read survives when its `MAPQ >= MAPSCORE`. The filter is applied with `samtools` on both input paths — on the [FastQ path](../pipeline/fastq-alignment.md) immediately after alignment, and on the [BAM path](../pipeline/bam-normalization.md) while the input alignments are staged. Pass `0` to keep every alignment regardless of mapping quality.
+> 
+> The same value is passed to every FinaleToolkit analysis as its `-q` threshold, so one setting governs both what is written into the analysis BAM and what the analyses read out of it. See [shared conventions](../analyses/index.md#3-shared-conventions).
+> 
+> ***Example:*** `--mapscore 20`
+
+---  
+  `--baseqscore BASEQSCORE`, `--b BASEQSCORE`  
+> **Minimum mean base quality.**  
+> *type: int*  
+> *default: 20*
+> 
+> Minimum mean base quality (Phred) a read must have to be kept: a read survives when its mean base quality is `>= BASEQSCORE`. On the [FastQ path](../pipeline/fastq-alignment.md) this is applied by `fastp` before the reads are aligned, so a failing pair is never aligned at all; on the [BAM path](../pipeline/bam-normalization.md) it is applied to the staged alignments by `samtools` using the filter expression `avg(qual) >= BASEQSCORE`. Pass `0` to keep every read regardless of base quality.
+> 
+> Both paths therefore mean the same thing by this option: the *mean* quality over a read's bases, not a per-base cutoff.
+> 
+> On the FastQ path the mean is measured *after* [adapter trimming](../pipeline/fastq-alignment.md#34-adapter-trimming-and-read-filtering), which `fastp` performs in the same pass, so low-quality adapter read-through at the 3′ end cannot push an otherwise good pair below the threshold. Adapter trimming is not configurable by this option and is always on for FastQ input.
+> 
+> ***Example:*** `--baseqscore 20`
 
 ### 2.3 Orchestration options
 

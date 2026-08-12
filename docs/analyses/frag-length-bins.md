@@ -14,7 +14,7 @@ This step runs for every genome build; it needs no reference files at all.
 
 ```text
 finaletoolkit frag-length-bins bams/{sample}.sorted.bam \
-    -q 30 \
+    -q <--mapscore> \
     --bin-size <--bin-size> \
     -min <--fragment-minimum> \
     -max <--fragment-maximum> \
@@ -40,7 +40,7 @@ finaletoolkit frag-length-bins bams/{sample}.sorted.bam \
 ---
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-min, --min-length` / `-max, --max-length`

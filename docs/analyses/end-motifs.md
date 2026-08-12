@@ -12,7 +12,7 @@ The resulting 256-entry frequency vector is a cfDNA feature in its own right, an
 
 ```text
 finaletoolkit end-motifs bams/{sample}.sorted.bam <ref2bit> \
-    -q 30 \
+    -q <--mapscore> \
     -k 4 \
     -min <--fragment-minimum> \
     -max <--fragment-maximum> \
@@ -44,7 +44,7 @@ finaletoolkit end-motifs bams/{sample}.sorted.bam <ref2bit> \
 ---
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-min, --min-length` / `-max, --max-length`

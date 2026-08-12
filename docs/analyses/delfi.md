@@ -12,7 +12,7 @@ The measurement is GC-corrected, which is essential: bin-level GC content confou
 
 ```text
 finaletoolkit delfi bams/{sample}.sorted.bam <chrom_sizes> <ref2bit> <intervals> \
-    -q 30 \
+    -q <--mapscore> \
     --blacklist-file <blacklist> \
     -g <gap> \
     -o delfi/{sample}_delfi.bed \
@@ -60,7 +60,7 @@ The four positionals must be given in this order:
 
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-b, --blacklist-file`

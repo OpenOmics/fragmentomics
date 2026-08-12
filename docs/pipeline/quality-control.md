@@ -2,11 +2,12 @@
 
 ## 1. About
 
-The pipeline produces three kinds of quality-control output, all written regardless of which input path was taken:
+The pipeline produces several kinds of quality-control output. The `bam_stats` reports and the project-level outputs are written regardless of which input path was taken; the FastQC, `fastp` and duplicate reports exist only for a FastQ run, which is the only path that has raw reads to inspect and trim and that does its own duplicate marking:
 
 | Output | Produced by | Scope |
 |--------|-------------|-------|
 | `qc/{sample}.samtools.stats.txt`<br>`qc/{sample}.flagstat.txt`<br>`qc/{sample}.idxstats.txt` | `bam_stats` | per sample |
+| `qc/{sample}.R1_fastqc.{zip,html}`<br>`qc/{sample}.R2_fastqc.{zip,html}`<br>`qc/{sample}.sorted_fastqc.{zip,html}`<br>`qc/{sample}.markdup.stats.txt`<br>`qc/{sample}.fastp.{json,html}` | [`align_fastq`](fastq-alignment.md) | per sample, FastQ input only |
 | `qc/{sample}.contig_validation.txt` | [`filter_reference_contigs`](contig-filter.md) | per sample, BAM input only |
 | `multiqc/multiqc_report.html` | `multiqc` | whole project |
 | `coverage/coverage_summary.xlsx` | `merge_coverage_excel` | whole project |
@@ -34,15 +35,36 @@ The pipeline produces three kinds of quality-control output, all written regardl
 
 ### 2.1 Why samtools and not Picard
 
-Metrics are derived from `samtools` rather than from Picard `MarkDuplicates` because the [FastQ path](fastq-alignment.md) fuses alignment, fixmate, sorting, duplicate marking and filtering into a **single pipe**. `samtools markdup` runs inside that pipe without `-f`, so no duplicate-metrics file is produced. `flagstat` recovers the duplicate rate from the flags on the reads themselves, which works identically for both input paths — including for staged BAMs, whose duplicate flags were set by whatever tool the user ran before providing them.
+Metrics are derived from `samtools` rather than from Picard because the [FastQ path](fastq-alignment.md) fuses alignment, filtering, fixmate, sorting and duplicate marking into a **single pipe**, and `samtools markdup` reports on that marking directly with `-f` (see §2.2). `flagstat` additionally recovers the duplicate rate from the flags on the reads themselves, which works identically for both input paths — including for staged BAMs, whose duplicate flags were set by whatever tool the user ran before providing them.
 
 All three reports are natively parsed by MultiQC, so the aggregate report has content no matter which path produced the BAM.
+
+## 2.2 FastQ-path reports (`align_fastq`)
+
+A FastQ run adds three more kinds of report, all written into `qc/` by [`align_fastq`](fastq-alignment.md) and all parsed natively by MultiQC:
+
+  `samtools markdup -f`
+> **Duplicate report,** `qc/{sample}.markdup.stats.txt`.
+>
+> Reads read/written/excluded/examined, paired and single duplicate counts, optical duplicates, and an estimated library size. Because `markdup` is the last stage of the pipe, these duplicates are flagged in the analysis BAM rather than removed from it, so this report describes reads that downstream analyses will still see.
+
+---
+  `fastqc`
+> **Read QC before and after alignment.**
+>
+> `qc/{sample}.R1_fastqc.*` and `qc/{sample}.R2_fastqc.*` from the raw mates, and `qc/{sample}.sorted_fastqc.*` from the analysis BAM. The first pair characterizes the library as sequenced — untrimmed, since FastQC runs upstream of `fastp`; the third characterizes what survived trimming, filtering and alignment. Adapter content is the clearest before/after contrast.
+
+---
+  `fastp`
+> **Adapter-trimming and base-quality filtering report,** `qc/{sample}.fastp.json` (plus an HTML copy).
+>
+> How many reads had adapter read-through trimmed and how many bases that removed, plus how many read pairs `fastp` kept and how many it dropped for falling below the [`--baseqscore`](../usage/run.md#22-analysis-options) mean-quality threshold or for trimming shorter than 15 bp — with before/after read counts, base counts, read lengths, Q20/Q30 rates and GC content. MultiQC identifies the JSON by content, not by filename. This is the report that accounts for the gap between the input FastQ read count and the reads `bwa-mem2` ever saw — the [`samtools view`](fastq-alignment.md#34-adapter-trimming-and-read-filtering) filter and duplicate marking account for the rest.
 
 ## 3. Aggregate report (`multiqc`)
 
 `multiqc` scans the `qc/` directory and writes `multiqc/multiqc_report.html` plus its `multiqc_report_data/` directory. Only `qc/` is scanned — deliberately, so MultiQC does not walk the large bigWig and BED outputs of the analysis steps looking for something to parse.
 
-The report is a project-level gather: it waits for every sample's `bam_stats` reports and for the merged coverage workbook, so it is written once per pipeline invocation with all samples side by side. The contig-validation reports share the `qc/` directory but are not in a format MultiQC recognizes, so they are ignored.
+The report is a project-level gather: it waits for every sample's `bam_stats` reports, for the FastQC, `fastp` and markdup reports on a FastQ run, and for the merged coverage workbook, so it is written once per pipeline invocation with all samples side by side. The contig-validation reports share the `qc/` directory but are not in a format MultiQC recognizes, so they are ignored.
 
 ## 4. Merged coverage workbook (`merge_coverage_excel`)
 
@@ -71,7 +93,7 @@ Two behaviors worth knowing:
 
 ---
   **Is the library complex enough?**
-> Duplicate rate in the MultiQC general statistics table, from `flagstat`. A high rate means fragmentation features are being computed from fewer independent molecules than the raw read count suggests.
+> Duplicate rate in the MultiQC general statistics table, from `flagstat` and — on a FastQ run — from `qc/{sample}.markdup.stats.txt`. A high rate means fragmentation features are being computed from fewer independent molecules than the raw read count suggests. On a FastQ run the duplicates are marked but retained in the analysis BAM, so they contribute to coverage and to the fragment-length and motif distributions.
 
 ---
   **Are fragment lengths as expected?**
@@ -84,3 +106,7 @@ Two behaviors worth knowing:
 ---
   **Did any contig come out empty?**
 > `qc/{sample}.idxstats.txt`. A primary chromosome with zero mapped reads points at a reference or input problem rather than biology.
+
+---
+  **How much of the data did filtering remove?**
+> On a FastQ run, `qc/{sample}.fastp.json` gives the pairs dropped before alignment — for mean base quality, or for trimming below 15 bp — and the gap between that and `flagstat`'s total gives what the `samtools view` flag and MAPQ filter removed after it. Losing a large fraction to either is a signal to revisit [`--baseqscore` and `--mapscore`](../usage/run.md#22-analysis-options) rather than to accept a thin BAM; on a BAM run the same thresholds are applied during [staging](bam-normalization.md#22-read-filtering), where the only record of them is the step's log.

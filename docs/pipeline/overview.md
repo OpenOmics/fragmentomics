@@ -22,7 +22,8 @@ Every analysis step reads that file and nothing else, which is what makes the an
     inputs/{sample}.R1.fastq.gz
     inputs/{sample}.R2.fastq.gz
              │
-             │  align_fastq   (bwa-mem2 → fixmate → sort → markdup → filter)
+             │  align_fastq   (fastqc → fastp trim+filter → bwa-mem2 → filter
+             │                 → fixmate → sort → markdup → fastqc)
              ▼
     bams/{sample}.sorted.bam
     ```
@@ -34,7 +35,7 @@ Every analysis step reads that file and nothing else, which is what makes the an
     ```text
     <user-provided>.bam / .cram / .sam
              │
-             │  stage_bams              (coordinate sort + index)
+             │  stage_bams              (filter → coordinate sort + index)
              ▼
     staged_bams/{sample}.sorted.bam
              │
@@ -57,6 +58,7 @@ From the canonical BAM, the analysis steps fan out in parallel:
                        ├─ frag-length-intervals
                        ├─ end-motifs ─────────────► mds
 bams/{sample}.sorted.bam ─┼─ interval-end-motifs
+                       ├─ bam_to_bed
                        ├─ delfi
                        ├─ wps ──┬─────────────────► agg-bw  (aggregate)
                        │        └─ adjust-wps ────► agg-bw  (aggregate)
@@ -81,7 +83,7 @@ Some steps are conditional on the reference files the selected build provides. T
 | [`adjust-wps`](../analyses/adjust-wps.md), [`cleavage-profile`](../analyses/cleavage-profile.md), and their aggregates | `tss`, `tss_interval`, `chrom_sizes` |
 | [`filter_reference_contigs`](contig-filter.md) | BAM input **and** a `dict` entry |
 
-The remaining steps are unconditional: [`frag-length-bins`](../analyses/frag-length-bins.md), [`coverage`](../analyses/coverage.md), and the project-level [QC steps](quality-control.md) (`bam_stats`, `merge_coverage_excel`, `multiqc`) always run. Note that `coverage` needs the build's `tss_interval` file even though it is not gated on it, so a build lacking that entry fails at the coverage step rather than skipping it.
+The remaining steps are unconditional: [`frag-length-bins`](../analyses/frag-length-bins.md), [`coverage`](../analyses/coverage.md), `bam_to_bed` (it needs no reference file beyond the BAM), and the project-level [QC steps](quality-control.md) (`bam_stats`, `merge_coverage_excel`, `multiqc`) always run. Note that `coverage` needs the build's `tss_interval` file even though it is not gated on it, so a build lacking that entry fails at the coverage step rather than skipping it.
 
 Both bundled builds define every reference key, so a default `hg38` or `hg19` run executes every step.
 
@@ -92,6 +94,9 @@ Both bundled builds define every reference key, so a default `hg38` or `hg19` ru
 ├── inputs/                     symlinks to the user's input files (read-only)
 ├── staged_bams/                sorted BAMs awaiting the contig filter (BAM input only)
 ├── bams/                       canonical analysis BAM + index, one per sample
+├── beds/
+│   ├── {sample}.bed.gz         aligned intervals of the analysis BAM, bgzip -l 9
+│   └── {sample}.bed.gz.tbi     tabix index for random access by locus
 ├── coverage/
 │   ├── {sample}_coverage.bed
 │   └── coverage_summary.xlsx   merged workbook across all samples

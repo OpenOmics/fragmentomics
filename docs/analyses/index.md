@@ -34,10 +34,10 @@ Every analysis reads the same input — the canonical per-sample analysis BAM, `
 
 Most of the analyses take the same handful of options, and the pipeline sets them consistently:
 
-  `-q 30` — mapping quality threshold
-> **Applied by every analysis that reads the BAM.**
+  `-q` — mapping quality threshold
+> **Set from [`--mapscore`](../usage/run.md#22-analysis-options)** (default 20), and applied by every analysis that reads the BAM.
 >
-> Fragments whose reads map below MAPQ 30 are excluded. This is applied at read time rather than baked into the BAM, so the same analysis BAM can be re-analyzed at a different threshold without realigning.
+> Fragments whose reads map below this MAPQ are excluded. The same threshold is also applied when the BAM is produced — during [alignment](../pipeline/fastq-alignment.md#34-adapter-trimming-and-read-filtering) on the FastQ path, or during [staging](../pipeline/bam-normalization.md#22-read-filtering) on the BAM path — so by the time an analysis reads the BAM the reads it would exclude are usually already gone. Applying it here as well means the threshold still holds if the BAM was produced by an earlier run at a looser setting.
 
 ---
   `-min` / `-max` — fragment length window

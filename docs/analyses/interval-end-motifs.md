@@ -12,7 +12,7 @@ In this pipeline the windows are the 5 kb intervals tiling the genome for the se
 
 ```text
 finaletoolkit interval-end-motifs bams/{sample}.sorted.bam <ref2bit> <intervals> \
-    -q 30 \
+    -q <--mapscore> \
     -k 4 \
     -min <--fragment-minimum> \
     -max <--fragment-maximum> \
@@ -47,7 +47,7 @@ finaletoolkit interval-end-motifs bams/{sample}.sorted.bam <ref2bit> <intervals>
 ---
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-min, --min-length` / `-max, --max-length`

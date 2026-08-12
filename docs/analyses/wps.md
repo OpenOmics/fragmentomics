@@ -22,7 +22,7 @@ finaletoolkit wps bams/{sample}.sorted.bam <tss> \
     -W 120 \
     -min 120 \
     -max 180 \
-    -q 30 \
+    -q <--mapscore> \
     -o wps/{sample}_wps_out_tss.bw \
     -w <threads> \
     -v
@@ -69,7 +69,7 @@ finaletoolkit wps bams/{sample}.sorted.bam <tss> \
 ---
   `-q, --quality-threshold`
 > **Minimum mapping quality.**
-> *value:* `30`
+> *value:* `--mapscore` (default 20)
 
 ---
   `-w, --workers`
