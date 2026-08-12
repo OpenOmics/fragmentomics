@@ -26,6 +26,12 @@
         "gres": "lscratch:200",
         "partition": "norm"
     },
+    "bam_to_bed": {
+        "threads": 4,
+        "mem": "8G",
+        "time": "12:00:00",
+        "partition": "norm"
+    },
     "coverage": {
         "threads": 1,
         "mem": "32000m",

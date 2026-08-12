@@ -113,6 +113,34 @@ def permissions(parser, path, *args, **kwargs):
     return os.path.abspath(path)
 
 
+def quality_threshold(parser, value, *args, **kwargs):
+    """Checks that a quality-score threshold is a non-negative integer. Used by
+    the --mapscore and --baseqscore options, which are both '>=' thresholds; a
+    negative threshold would silently keep everything rather than doing what
+    the user asked, so it is rejected instead.
+    @param parser <argparse.ArgumentParser() object>:
+        Argparse parser object
+    @param value <str>:
+        Value provided on the command line
+    @return threshold <int>:
+        The threshold as a non-negative integer
+    """
+    try:
+        threshold = int(value)
+    except ValueError:
+        parser.error(
+            "Quality threshold '{0}' is not an integer! Please provide a "
+            "non-negative whole number, i.e. a Phred score.".format(value)
+        )
+    if threshold < 0:
+        parser.error(
+            "Quality threshold '{0}' is negative! Please provide a "
+            "non-negative whole number, where 0 disables the filter.".format(value)
+        )
+
+    return threshold
+
+
 def standard_input(parser, path, *args, **kwargs):
     """Checks for standard input when provided or permissions using permissions().
     @param parser <argparse.ArgumentParser() object>:

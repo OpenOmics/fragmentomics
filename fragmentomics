@@ -64,6 +64,7 @@ from src.utils import (
     err,
     fatal,
     permissions,
+    quality_threshold,
     require,
 )
 
@@ -294,6 +295,7 @@ def parsed_arguments(name, description):
                 [--right-tss-flank RIGHT_TSS_FLANK] \\
                 [--split-interval SPLIT_INTERVAL] \\
                 [--bin-size BIN_SIZE] \\
+                [--mapscore MAPSCORE] [--baseqscore BASEQSCORE] \\
                 -g {{hg38,hg19}} \\
                 --input INPUT [INPUT ...] \\
                 --output OUTPUT
@@ -367,6 +369,29 @@ def parsed_arguments(name, description):
                                 distribution histogram. Also used to name the
                                 fragment-length bin output files, default: 1.
                                   Example: --bin-size 1
+          --mapscore MAPSCORE, --m MAPSCORE
+                                Minimum mapping quality (MAPQ). Alignments with a
+                                mapping quality of less than this value are
+                                discarded, i.e. a read is kept when its MAPQ is
+                                >= MAPSCORE. Applied with samtools for both input
+                                types: on the FastQ path immediately after the
+                                alignment, and on the BAM path while the input
+                                alignments are staged. The same value is passed
+                                to every finaletoolkit analysis as its -q
+                                threshold. A value of 0 keeps every alignment,
+                                default: 20.
+                                  Example: --mapscore 20
+          --baseqscore BASEQSCORE, --b BASEQSCORE
+                                Minimum mean base quality (Phred). Reads whose
+                                average base quality is less than this value are
+                                discarded, i.e. a read is kept when its mean base
+                                quality is >= BASEQSCORE. On the FastQ path this
+                                is applied by fastp before the reads are aligned,
+                                and measured after the adapter trimming fastp
+                                performs in the same pass; on the BAM path it is
+                                applied to the staged alignments by samtools. A
+                                value of 0 keeps every read, default: 20.
+                                  Example: --baseqscore 20
 
         {3}{4}Orchestration options:{5}
           --mode {{slurm,local}}
@@ -581,6 +606,26 @@ def parsed_arguments(name, description):
         type = int,
         required = False,
         default = 1,
+        help = argparse.SUPPRESS
+    )
+
+    # Read filtering thresholds. Both are ">=" thresholds: a read is kept when
+    # its score is greater than or equal to the value given, and a value of 0
+    # disables the filter. The long option is listed first so argparse takes
+    # the destination (and therefore the config['options'] key) from it.
+    subparser_run.add_argument(
+        '--mapscore', '--m',
+        type = lambda option: quality_threshold(parser, option),
+        required = False,
+        default = 20,
+        help = argparse.SUPPRESS
+    )
+
+    subparser_run.add_argument(
+        '--baseqscore', '--b',
+        type = lambda option: quality_threshold(parser, option),
+        required = False,
+        default = 20,
         help = argparse.SUPPRESS
     )
 

@@ -1,6 +1,6 @@
 {
     "images": {
         "finaletoolkit": "docker://rroutsong/finaletoolkit:0.0.3",
-        "bwamem2": "docker://rroutsong/fragmentomics_bwamem2:0.0.2"
+        "bwamem2": "docker://rroutsong/fragmentomics_bwamem2:0.0.4"
     }
 }

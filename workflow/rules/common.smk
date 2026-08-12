@@ -12,6 +12,13 @@ right_flank                     = int(config['options']['right_tss_flank'])
 left_flank                      = int(config['options']['left_tss_flank'])
 bin_size                        = int(config['options']['bin_size'])
 sample_stems                    = config['samples']
+# Read filtering thresholds from the frontend's --mapscore/--baseqscore. Both
+# are inclusive lower bounds (a read is kept when its score is >= the value)
+# and 0 disables the filter. Mapping quality is enforced with samtools on both
+# input paths; mean base quality is enforced by fastp on the FastQ path (before
+# alignment, on the adapter-trimmed read) and by samtools on the BAM path.
+min_mapping_quality             = int(config['options']['mapscore'])
+min_base_quality                = int(config['options']['baseqscore'])
 
 # genome linked artifacts
 genome_files                    = config["references"][genome]
@@ -47,6 +54,7 @@ bam_dir                          = join(output_dir, 'bams')
 # bam_dir rather than a subdirectory because Snakemake wildcards match across
 # path separators, so bams/staged/x would also satisfy bams/{sid}.
 staged_bam_dir                   = join(output_dir, 'staged_bams')
+bed_dir                          = join(output_dir, 'beds')
 coverage_dir                     = join(output_dir, 'coverage')
 fragment_length_dir              = join(output_dir, 'frag_length_bins')
 fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
@@ -72,34 +80,85 @@ default_threads                  = cluster['__default__']['threads']
 # frontend, src/run.py, auto-detects and enforces a single type). Both branches
 # below produce the same target, bams/{sample}.sorted.bam, which every
 # downstream finaletoolkit rule consumes:
-#   • illumina_fastq -> align_fastq: bwa-mem2 alignment + dedup + proper-pair
-#     filtering (full pipeline work).
+#   • illumina_fastq -> align_fastq: bwa-mem2 alignment + proper-pair filtering
+#     + duplicate marking (full pipeline work).
 #   • bam            -> stage_bams:  sort/index ready-made alignments (full
 #     pipeline work minus alignment).
-if input_type == "illumina_fastq":
 
+if input_type == "illumina_fastq":
     rule align_fastq:
         """
-        Align paired-end Illumina FastQ reads to the reference genome with
-        bwa-mem2, then produce an analysis-ready coordinate-sorted BAM:
-        fixmate -> sort -> markdup (mark duplicates) -> keep only properly
-        paired, primary, mapped, non-duplicate reads. This yields the same
-        bams/{sid}.sorted.bam that the BAM input path stages directly, so all
-        downstream fragmentomics rules are input-type agnostic.
+        Adapter-trim and quality-filter paired-end Illumina FastQ reads, align
+        them to the reference genome with bwa-mem2, then produce an
+        analysis-ready coordinate-sorted BAM: proper-pair/primary/
+        mapping-quality filter -> fixmate -> orphan re-check -> sort -> markdup.
+
+        Duplicates are marked but deliberately *not* removed. markdup is the
+        last stage of the pipe, downstream of every samtools view filter, so
+        the 0x400 flags it sets cannot be acted on by those filters; the
+        analysis BAM keeps every properly-paired primary read and simply
+        records which ones are duplicates. Each downstream rule is then free to
+        include or exclude them.
+
+        Filtering runs *before* fixmate so that orphaned mates can be cleaned
+        up. Dropping reads on flags or mapping quality can remove one mate of a
+        pair while keeping the other, and the survivor would still carry 0x2
+        plus mate coordinates pointing at a read that is no longer in the file.
+        Because the filter runs while the stream is still name-collated,
+        fixmate sees the survivor as a singleton and clears its paired flags
+        (0x1/0x2) and mate fields; the second, flag-only `view -f 2` then drops
+        those de-paired records. fixmate -r additionally removes unmapped and
+        secondary leftovers. Without this, downstream steps would infer
+        fragment coordinates from a mate that does not exist.
+
+        Only one sort is performed. samtools fixmate needs name-collated input,
+        which is exactly what bwa-mem2 emits for paired FastQ input (both mates
+        of a pair are adjacent), so the query-name sort that would otherwise
+        precede fixmate is redundant, and the filter and orphan re-check both
+        run inside that same name-collated stretch of the pipe. The single
+        coordinate sort that follows is the one markdup and every downstream
+        rule require.
+
+        Read filtering is driven by the frontend's --baseqscore and --mapscore
+        thresholds, both inclusive lower bounds. fastp applies the base-quality
+        threshold to the raw reads before they are aligned, discarding any pair
+        whose mean base quality falls below it, and the samtools view stage
+        applies the mapping-quality threshold to the alignments. Passing 0 for
+        either disables that filter.
+
+        fastp also trims adapter read-through before aligning. For paired-end
+        input it locates the adapter by overlap analysis - the two mates of a
+        short fragment overlap, which reveals where the insert ends and the
+        adapter begins - and --detect_adapter_for_pe additionally auto-detects
+        the adapter sequence itself for pairs that do not overlap. Trimming runs
+        before the quality filter, so --baseqscore is evaluated on the trimmed
+        read rather than on adapter bases that are about to be removed, and
+        fastp's default --length_required of 15 drops any pair whose read trims
+        below 15 bp. --unqualified-percent-limit is pinned to 100 so mean base
+        quality remains the only *quality* criterion fastp applies, which keeps
+        the meaning of --baseqscore identical on both input paths; the BAM path
+        enforces the same threshold with samtools, though it cannot trim.
+
+        FastQC runs on both sides of the alignment - on the raw mates before,
+        and on the analysis BAM after - and markdup writes its duplicate
+        report, as does fastp for the reads it filtered. All of them land in
+        qc/, which is the directory the multiqc rule scans, so they are picked
+        up by the aggregate report.
 
         bwa-mem2 ships one binary per SIMD instruction set rather than a single
         portable executable, so the binary to run is resolved at runtime by
-        python_cpu_arch.py (avx2 -> sse4.2 -> sse4.1, falling back to the
-        upstream `bwa-mem2` dispatcher shim; avx512bw is deliberately never
-        selected). Detection runs in the shell block rather than at DAG-build
-        time because the submitting host and the compute node need not share a
-        CPU generation, and a binary built for absent instructions dies with
-        SIGILL.
+        python_cpu_arch.py. Detection runs in the shell block rather than at
+        DAG-build time because the submitting host and the compute node need
+        not share a CPU generation, and a binary built for absent instructions
+        dies with SIGILL.
+
         @Input:
             Paired-end FastQ mates (scatter-per-sample), staged by the
             frontend into the output directory's inputs/ folder.
         @Output:
-            Coordinate-sorted, indexed analysis BAM.
+            Coordinate-sorted, indexed analysis BAM with duplicates flagged,
+            the markdup duplicate report, and FastQC reports for the raw mates
+            and for the analysis BAM.
         """
         input:
             r1                  = join(inputs_dir, "{sid}.R1.fastq.gz"),
@@ -107,6 +166,16 @@ if input_type == "illumina_fastq":
         output:
             bam                 = join(bam_dir, "{sid}.sorted.bam"),
             bai                 = join(bam_dir, "{sid}.sorted.bam.bai"),
+            markdup             = join(qc_dir, "{sid}.markdup.stats.txt"),
+            # FastQC derives these names from its input filenames, so they are
+            # not free-form: {sid}.R1.fastq.gz -> {sid}.R1_fastqc.zip and
+            # {sid}.sorted.bam -> {sid}.sorted_fastqc.zip. The matching .html
+            # reports are written alongside them.
+            fastqc_r1           = join(qc_dir, "{sid}.R1_fastqc.zip"),
+            fastqc_r2           = join(qc_dir, "{sid}.R2_fastqc.zip"),
+            fastqc_bam          = join(qc_dir, "{sid}.sorted_fastqc.zip"),
+            fastp_json          = join(qc_dir, "{sid}.fastp.json"),
+            fastp_html          = join(qc_dir, "{sid}.fastp.html"),
         container:
             config['images']['bwamem2']
         resources:
@@ -121,10 +190,26 @@ if input_type == "illumina_fastq":
             sid                 = "{sid}",
             index               = bwamem2_index,
             arch_script         = join(bin_dir, 'python_cpu_arch.py'),
-            # 0x2 (proper pair) kept; 3852 excludes unmapped, mate-unmapped,
-            # secondary, qcfail, duplicate, and supplementary reads.
+            # 0x2 (proper pair) kept; 2828 excludes unmapped, mate-unmapped,
+            # secondary, qcfail and supplementary reads. This is the usual 3852
+            # minus 0x400 (duplicate): duplicate marking runs after this filter
+            # precisely so that marked duplicates are not dropped here.
+            # keep_flag is used twice: once with drop_flag/map_quality for the
+            # main filter, and once on its own after fixmate to drop mates that
+            # fixmate de-paired because their partner did not survive.
             keep_flag           = "2",
-            drop_flag           = "3852",
+            drop_flag           = "2828",
+            # --mapscore, applied by samtools view: -q keeps alignments whose
+            # MAPQ is >= this value. --baseqscore, applied by fastp: a pair is
+            # kept when its mean base quality, measured after adapter trimming,
+            # is >= this value. 0 disables either filter (samtools -q 0 keeps
+            # everything, and 0 is fastp's own "no requirement" value for
+            # --average_qual).
+            map_quality         = min_mapping_quality,
+            base_quality        = min_base_quality,
+            # fastp ignores anything above 16 worker threads.
+            fastp_threads       = min(int(allocated("threads", "align_fastq", cluster)), 16),
+            qc_dir              = qc_dir,
             tmpdir              = tmpdir,
         shell:
             dedent("""
@@ -135,23 +220,69 @@ if input_type == "illumina_fastq":
             if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
             tmp=$(mktemp -d -p \"{params.tmpdir}\")
             trap 'rm -rf "${{tmp}}"' EXIT
+            mkdir -p \"{params.qc_dir}\"
 
+            # Pre-alignment read QC on the raw mates. Two threads because
+            # FastQC parallelizes across input files, not within one.
+            fastqc \\
+                --threads 2 \\
+                --dir \"${{tmp}}\" \\
+                --outdir {params.qc_dir} \\
+                {input.r1} {input.r2}
+
+            # Adapter trimming plus the base-quality filter (--baseqscore):
+            # trim adapter read-through, then drop pairs whose mean base quality
+            # is below the threshold. Trimming happens first, so --baseqscore is
+            # evaluated on the trimmed read rather than on adapter bases that
+            # are about to be removed. The trimmed mates are written to the
+            # node's temporary directory and consumed by the aligner below, so
+            # no preprocessed FastQ is kept after the step.
+            fastp \\
+                --in1 {input.r1} \\
+                --in2 {input.r2} \\
+                --out1 ${{tmp}}/{params.sid}.R1.trimmed.fastq.gz \\
+                --out2 ${{tmp}}/{params.sid}.R2.trimmed.fastq.gz \\
+                --detect_adapter_for_pe \\
+                --average_qual {params.base_quality} \\
+                --unqualified_percent_limit 100 \\
+                --json {output.fastp_json} \\
+                --html {output.fastp_html} \\
+                --thread {params.fastp_threads}
+
+            # Alignment and BAM finishing, fused into one pipe so no
+            # intermediate BAM is written. Stage order matters:
+            #   view   filter on flags + mapping quality while the stream is
+            #          still name-collated, so orphans stay adjacent
+            #   fixmate fill mate coordinates/ISIZE, add the ms tag markdup
+            #          needs, and de-pair any mate whose partner was filtered
+            #   view   drop those de-paired orphans (flag-only, no -q)
+            #   sort   the one coordinate sort, required by markdup
+            #   markdup flag duplicates last so nothing can drop them
             \"${{bwa_bin}}\" mem \\
                 -t {threads} \\
                 -R "@RG\\tID:{params.sid}\\tSM:{params.sid}\\tPL:ILLUMINA\\tLB:{params.sid}" \\
-                {params.index} {input.r1} {input.r2} \\
-            | samtools sort -n -@ {threads} -T ${{tmp}}/nsort -O bam - \\
-            | samtools fixmate -m -@ {threads} - - \\
+                {params.index} \\
+                ${{tmp}}/{params.sid}.R1.trimmed.fastq.gz \\
+                ${{tmp}}/{params.sid}.R2.trimmed.fastq.gz \\
+            | samtools view -b -h -f {params.keep_flag} -F {params.drop_flag} \\
+                -q {params.map_quality} -@ {threads} - \\
+            | samtools fixmate -m -r -@ {threads} - - \\
+            | samtools view -b -f {params.keep_flag} -@ {threads} - \\
             | samtools sort -@ {threads} -T ${{tmp}}/psort -O bam - \\
-            | samtools markdup -@ {threads} -T ${{tmp}}/mkdup - - \\
-            | samtools view -b -f {params.keep_flag} -F {params.drop_flag} \\
-                -@ {threads} -o {output.bam} -
+            | samtools markdup -@ {threads} -T ${{tmp}}/mkdup \\
+                -f {output.markdup} - {output.bam}
 
             samtools index -@ {threads} {output.bam}
+
+            # Post-alignment QC on the analysis BAM.
+            fastqc \\
+                --format bam \\
+                --dir \"${{tmp}}\" \\
+                --outdir {params.qc_dir} \\
+                {output.bam}
             """)
 
 else:
-
     # Where stage_bams writes. When the selected genome ships a sequence
     # dictionary, staging lands in staged_bam_dir and filter_reference_contigs
     # produces the canonical bams/{sid}.sorted.bam. Without a dictionary there
@@ -160,6 +291,19 @@ else:
     stage_dir = staged_bam_dir if sequence_dict else bam_dir
 
     rule stage_bams:
+        """
+        Sort, filter and index ready-made alignments into the staging area.
+
+        The frontend's --mapscore and --baseqscore thresholds are enforced here
+        with samtools, since this path has no reads to preprocess: mapping
+        quality with `view -q`, and mean base quality with the filter
+        expression `avg(qual) >= <threshold>`. Both are inclusive lower bounds
+        and either is skipped entirely when its threshold is 0.
+        @Input:
+            User-provided BAM/CRAM/SAM alignments (gather).
+        @Output:
+            Coordinate-sorted, indexed, filtered BAMs.
+        """
         input:
             all_input_files
         output:
@@ -180,14 +324,18 @@ else:
             rname                   = "stage_bams",
             bam_dir                  = stage_dir,
             python_script            = join(bin_dir, 'stage_input_files.py'),
-            memory                   = str(allocated("mem",  "stage_bams", cluster)).replace('G' ,'')
+            memory                   = str(allocated("mem",  "stage_bams", cluster)).replace('G' ,''),
+            map_quality              = min_mapping_quality,
+            base_quality             = min_base_quality,
         shell:
             dedent("""
             python {params.python_script} \\
                 --files {input} \\
                 --output {params.bam_dir} \\
                 --threads {threads} \\
-                --memory {params.memory}
+                --memory {params.memory} \\
+                --min-mapq {params.map_quality} \\
+                --min-baseq {params.base_quality}
             """)
 
 
@@ -251,6 +399,75 @@ if input_type != "illumina_fastq" and sequence_dict:
             """)
 
 
+rule bam_to_bed:
+    """
+    Convert the canonical analysis BAM into a compressed, tabix-indexed BED6
+    of aligned intervals, one record per alignment.
+
+    Reads the same canonical BAM every finaletoolkit rule consumes, so the BED
+    is produced identically on both input paths and inherits the filtering
+    already applied upstream (proper-pair/primary flags and the
+    --mapscore/--baseqscore thresholds). Duplicates are flagged but not
+    dropped in that BAM, and this rule does not drop them either: the BED is a
+    faithful interval representation of the analysis BAM, and consumers that
+    want duplicates excluded are free to filter on the read name or re-derive
+    them.
+
+    Compression is bgzip at level 9, the highest the deflate format defines, so
+    the output is as small as gzip can make it; the cost is paid once here
+    rather than on every read of the result. bgzip rather than gzip because
+    BGZF is a gzip-compatible container - `zcat`/`gunzip`/`pandas.read_csv`
+    read the result exactly as they would a plain .gz - while additionally
+    being block-compressed, which is what makes the tabix index below possible.
+    A flat gzip stream at the same level is no smaller and cannot be indexed.
+    The rule's threads go to bgzip, which is the slow half of the pipe at level
+    9 and the only half that scales; bedtools is single-threaded.
+
+    bedtools writes to stdout and the stream is compressed inside the pipe, so
+    no uncompressed BED ever lands on disk - worth avoiding, since the
+    plain-text form of a whole-genome cfDNA BAM is several times the size of
+    the BAM itself.
+
+    tabix then builds the companion .tbi so consumers can pull a single locus
+    out of a whole-genome BED without decompressing it, the same random access
+    the .bai gives for the BAM. It is valid here because the records come out
+    of bedtools in input order and the input is coordinate-sorted, which is
+    exactly tabix's requirement; no intermediate sort is needed. -f overwrites
+    a stale index left behind by an interrupted run rather than failing on it.
+
+    @Input:
+        Coordinate-sorted, indexed analysis BAM (scatter-per-sample).
+    @Output:
+        BGZF-compressed (level 9) BED of aligned intervals, plus its tabix
+        index.
+    """
+    input:
+        bam                     = join(bam_dir, "{sid}.sorted.bam"),
+        bai                     = join(bam_dir, "{sid}.sorted.bam.bai"),
+    output:
+        bed                     = join(bed_dir, "{sid}.bed.gz"),
+        tbi                     = join(bed_dir, "{sid}.bed.gz.tbi"),
+    container:
+        config['images']['bwamem2']
+    resources:
+        partition = allocated("partition", "bam_to_bed", cluster),
+        mem       = allocated("mem",  "bam_to_bed", cluster),
+        time      = allocated("time", "bam_to_bed", cluster),
+        gres      = allocated("gres", "bam_to_bed", cluster),
+    threads:
+        int(allocated("threads", "bam_to_bed", cluster))
+    params:
+        rname                   = "bam_to_bed",
+    shell:
+        dedent("""
+        bedtools bamtobed \\
+            -i {input.bam} \\
+        | bgzip --compress-level 9 --threads {threads} -c > {output.bed}
+
+        tabix -f -p bed {output.bed}
+        """)
+
+
 rule coverage:
     input:
         bam                     = join(bam_dir, "{sid}.sorted.bam"),
@@ -267,6 +484,7 @@ rule coverage:
         config['images']['finaletoolkit']
     params:
         rname                   = "coverage",
+        map_quality             = min_mapping_quality,
         intervals               = tss_interval,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len
@@ -276,7 +494,7 @@ rule coverage:
             coverage {input.bam} {params.intervals} \\
             -n \\
             --scale-factor 1000000 \\
-            -q 30 \\
+            -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
             --intersect-policy any \\
@@ -303,6 +521,7 @@ rule frag_length_bins:
         int(allocated("threads", "frag_length_bins", cluster))
     params:
         rname                   = "frag_length_bins",
+        map_quality             = min_mapping_quality,
         bin_size                = str(bin_size),
         min_len                 = str(min_fragment_len),
         max_len                 = str(max_fragment_len),
@@ -310,7 +529,7 @@ rule frag_length_bins:
         dedent("""
         finaletoolkit \\
             frag-length-bins {input.bam} \\
-            -q 30 \\
+            -q {params.map_quality} \\
             --bin-size {params.bin_size} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
@@ -337,6 +556,7 @@ rule frag_length_intervals:
         int(allocated("threads", "frag_length_intervals", cluster))
     params:
         rname                   = "frag_length_intervals",
+        map_quality             = min_mapping_quality,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
         intervals               = intervals
@@ -344,7 +564,7 @@ rule frag_length_intervals:
         dedent("""
         finaletoolkit \\
             frag-length-intervals {input.bam} {params.intervals} \\
-            -q 30 \\
+            -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
             --intersect-policy any \\
@@ -370,6 +590,7 @@ rule end_motifs:
         int(allocated("threads", "end_motifs", cluster))
     params:
         rname                   = "end_motifs",
+        map_quality             = min_mapping_quality,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
         ref2bit                 = ref2bit,
@@ -377,7 +598,7 @@ rule end_motifs:
         dedent("""
         finaletoolkit \\
             end-motifs {input.bam} {params.ref2bit} \\
-            -q 30 \\
+            -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
             -o {output.tsv} \\
@@ -402,6 +623,7 @@ rule interval_end_motifs:
         int(allocated("threads", "interval_end_motifs", cluster))
     params:
         rname                   = "interval_end_motifs",
+        map_quality             = min_mapping_quality,
         ref2bit                 = ref2bit,
         intervals               = intervals,
         min_len                 = min_fragment_len,
@@ -415,7 +637,7 @@ rule interval_end_motifs:
 
         finaletoolkit \\
             interval-end-motifs {input.bam} {params.ref2bit} {params.intervals} \\
-            -q 30 \\
+            -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
             -o {output.tsv} \\
@@ -465,6 +687,7 @@ rule delfi:
         int(allocated("threads", "delfi", cluster))
     params:
         rname                   = "delfi",
+        map_quality             = min_mapping_quality,
         chrom_sizes             = chrom_sizes,
         ref2bit                 = ref2bit,
         intervals               = intervals,
@@ -473,7 +696,7 @@ rule delfi:
     shell:
         dedent("""
         finaletoolkit delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {params.intervals} \\
-            -q 30{params.blacklist_cmd}{params.gap_cmd} \\
+            -q {params.map_quality}{params.blacklist_cmd}{params.gap_cmd} \\
             -o {output.bed} \\
             -t {threads} \\
             -v \\
@@ -497,6 +720,7 @@ rule wps:
         int(allocated("threads", "wps", cluster))
     params:
         rname                   = "wps",
+        map_quality             = min_mapping_quality,
         intervals               = split_interval,
         tss                     = tss
     shell:
@@ -507,7 +731,7 @@ rule wps:
             -W 120 \\
             --min-length 120 \\
             --max-length 180 \\
-            -q 30 \\
+            -q {params.map_quality} \\
             -o {output.bw} \\
             -t {threads} \\
             -v
@@ -562,6 +786,7 @@ rule cleavage_profile:
         int(allocated("threads", "cleavage_profile", cluster))
     params:
         rname                   = "cleavage_profile",
+        map_quality             = min_mapping_quality,
         l                       = left_flank,
         r                       = right_flank,
         min_len                 = min_fragment_len,
@@ -575,7 +800,7 @@ rule cleavage_profile:
             -o {output.bw} \\
             --pad-left {params.l} \\
             --pad-right {params.r} \\
-            -q 30 \\
+            -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
             -t {threads} \\
@@ -708,16 +933,36 @@ rule merge_coverage_excel:
         """)
 
 
+# QC artifacts that only the FastQ input path produces: the FastQC reports
+# align_fastq writes on either side of the alignment, the samtools markdup
+# duplicate report, and the fastp trimming/filtering report. They are guaranteed
+# to exist by the time multiqc runs
+# (align_fastq also produces the BAM that bam_stats consumes), but they are
+# requested explicitly so the aggregate report's dependency on them is visible
+# in the DAG. Empty for a BAM-input run, where no such reports exist.
+if input_type == "illumina_fastq":
+    fastq_qc_reports = (
+        expand(join(qc_dir, "{sample}.R1_fastqc.zip"), sample=sample_stems)
+        + expand(join(qc_dir, "{sample}.R2_fastqc.zip"), sample=sample_stems)
+        + expand(join(qc_dir, "{sample}.sorted_fastqc.zip"), sample=sample_stems)
+        + expand(join(qc_dir, "{sample}.markdup.stats.txt"), sample=sample_stems)
+        + expand(join(qc_dir, "{sample}.fastp.json"), sample=sample_stems)
+    )
+else:
+    fastq_qc_reports = []
+
+
 rule multiqc:
     """
-    Aggregate the per-sample samtools QC reports into a single interactive
-    HTML report. Only the qc/ directory is scanned, so MultiQC does not walk
-    the large bigwig/bed outputs of the fragmentomics rules. The coverage
-    workbook is taken as an input so the report is generated once the
-    project-level coverage gather has finished.
+    Aggregate the per-sample QC reports into a single interactive HTML report.
+    Only the qc/ directory is scanned, so MultiQC does not walk the large
+    bigwig/bed outputs of the fragmentomics rules. The coverage workbook is
+    taken as an input so the report is generated once the project-level
+    coverage gather has finished.
     @Input:
-        Per-sample samtools stats/flagstat/idxstats reports (gather) and the
-        merged coverage workbook.
+        Per-sample samtools stats/flagstat/idxstats reports (gather), plus the
+        FastQC and markdup reports on a FastQ run, and the merged coverage
+        workbook.
     @Output:
         MultiQC HTML report.
     """
@@ -725,6 +970,7 @@ rule multiqc:
         stats                   = expand(join(qc_dir, "{sample}.samtools.stats.txt"), sample=sample_stems),
         flagstat                = expand(join(qc_dir, "{sample}.flagstat.txt"), sample=sample_stems),
         idxstats                = expand(join(qc_dir, "{sample}.idxstats.txt"), sample=sample_stems),
+        fastq_qc                = fastq_qc_reports,
         xlsx                    = coverage_xlsx,
     output:
         report                  = multiqc_report,

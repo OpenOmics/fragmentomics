@@ -94,6 +94,7 @@ all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
 bin_dir                          = join(output_dir, 'workflow', 'scripts')
 bam_dir                          = join(output_dir, 'bams')
+bed_dir                          = join(output_dir, 'beds')
 coverage_dir                     = join(output_dir, 'coverage')
 fragment_length_dir              = join(output_dir, 'frag_length_bins')
 fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
@@ -122,6 +123,18 @@ all_outputs.extend(
         sample=samples,
         bin_size=[bin_size]
     )
+)
+
+# BGZF-compressed BED of the analysis BAM's aligned intervals, plus its tabix
+# index. Unconditional, since bam_to_bed needs no reference file beyond the BAM
+# itself. The .tbi is written by the same job as the .bed.gz, so requesting it
+# pulls in nothing extra; it is listed so the index is visibly a deliverable
+# rather than a side effect.
+all_outputs.extend(
+    expand(join(bed_dir, "{sample}.bed.gz"), sample=samples)
+)
+all_outputs.extend(
+    expand(join(bed_dir, "{sample}.bed.gz.tbi"), sample=samples)
 )
 
 # Project-level QC. The merged coverage workbook is a gather over every
