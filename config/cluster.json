@@ -19,6 +19,13 @@
         "gres": "lscratch:200",
         "partition": "norm"
     },
+    "remove_orphan_reads": {
+        "threads": 16,
+        "mem": "32G",
+        "time": "12:00:00",
+        "gres": "lscratch:200",
+        "partition": "norm"
+    },
     "filter_reference_contigs": {
         "threads": 8,
         "mem": "16G",
@@ -111,15 +118,6 @@
         "time": "04:00:00",
         "partition": "norm"
     },
-    "_comment_qc": [
-        "QC and project-level report rules. bam_stats is scatter-per-sample;",
-        "merge_coverage_excel and multiqc are gather rules that run once per",
-        "pipeline invocation. Alignment QC is derived from samtools rather",
-        "than Picard because align_bwa, sort_bam, mark_duplicates and",
-        "filter_bam are fused into the single align_fastq rule above, which",
-        "runs bwa-mem2 | sort | fixmate | sort | markdup | view as one pipe",
-        "and therefore emits no separate duplicate-metrics file."
-    ],
     "bam_stats": {
         "threads": 4,
         "mem": "8G",
@@ -127,11 +125,32 @@
         "gres": "lscratch:20",
         "partition": "norm"
     },
+    "fastqc_bam": {
+        "threads": 2,
+        "mem": "8G",
+        "time": "04:00:00",
+        "gres": "lscratch:100",
+        "partition": "norm"
+    },
+    "fastp_bam": {
+        "threads": 8,
+        "mem": "16G",
+        "time": "12:00:00",
+        "gres": "lscratch:200",
+        "partition": "norm"
+    },
     "merge_coverage_excel": {
         "threads": 1,
         "mem": "32000m",
         "time": "72:02:00",
         "gres": "lscratch:100",
+        "partition": "norm"
+    },
+    "finaletoolkit_multiqc": {
+        "threads": 1,
+        "mem": "16G",
+        "time": "04:00:00",
+        "gres": "lscratch:20",
         "partition": "norm"
     },
     "multiqc": {

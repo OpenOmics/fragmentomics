@@ -23,7 +23,8 @@ Every analysis step reads that file and nothing else, which is what makes the an
     inputs/{sample}.R2.fastq.gz
              │
              │  align_fastq   (fastqc → fastp trim+filter → bwa-mem2 → filter
-             │                 → fixmate → sort → markdup → fastqc)
+             │                 → name sort → fixmate → coordinate sort
+             │                 → markdup → fastqc)
              ▼
     bams/{sample}.sorted.bam
     ```
@@ -39,6 +40,10 @@ Every analysis step reads that file and nothing else, which is what makes the an
              ▼
     staged_bams/{sample}.sorted.bam
              │
+             │  remove_orphan_reads     (drop singletons and orphaned mates)
+             ▼
+    staged_bams/{sample}.paired.bam
+             │
              │  filter_reference_contigs  (subset to reference contigs)
              ▼
     bams/{sample}.sorted.bam
@@ -48,7 +53,7 @@ Every analysis step reads that file and nothing else, which is what makes the an
 
     !!! note
 
-        `staged_bams/` only exists when the selected genome build ships a sequence dictionary (a `dict` entry in `config/genome.json`). Both bundled builds, `hg19` and `hg38`, do. If a build has no dictionary there is nothing to validate against, so `stage_bams` writes `bams/` directly and the contig filter is not part of the workflow at all.
+        The contig filter only exists when the selected genome build ships a sequence dictionary (a `dict` entry in `config/genome.json`). Both bundled builds, `hg19` and `hg38`, do. If a build has no dictionary there is nothing to validate against, so `remove_orphan_reads` writes `bams/` directly and the contig filter is not part of the workflow at all. The `{sample}.paired.bam` intermediate is temporary either way — Snakemake deletes it as soon as the contig filter has consumed it.
 
 From the canonical BAM, the analysis steps fan out in parallel:
 
@@ -63,10 +68,14 @@ bams/{sample}.sorted.bam ─┼─ interval-end-motifs
                        ├─ wps ──┬─────────────────► agg-bw  (aggregate)
                        │        └─ adjust-wps ────► agg-bw  (aggregate)
                        ├─ cleavage-profile ───────► agg-bw  (aggregate)
-                       └─ bam_stats ──────────────► multiqc
+                       ├─ bam_stats ──────────────► multiqc
+                       ├─ fastqc_bam ─────────────► multiqc   (BAM input only)
+                       └─ fastp_bam ──────────────► multiqc   (BAM input only)
 ```
 
 Each analysis step is documented in the [Analyses](../analyses/index.md) section.
+
+The analysis outputs are not only end products. `finaletoolkit_multiqc` gathers them — coverage, fragment lengths, end motifs, MDS, DELFI and the aggregate TSS profiles — and summarizes them into the aggregate report as well, so a run's fragmentomics measurements can be compared across samples in one place. The two read-QC steps above exist only for BAM input; a FastQ run gets the equivalent reports from `align_fastq`, which runs `fastqc` and `fastp` as part of aligning. See [Quality control](quality-control.md).
 
 ## 3. Which steps run
 
@@ -92,7 +101,8 @@ Both bundled builds define every reference key, so a default `hg38` or `hg19` ru
 ```text
 <--output>/
 ├── inputs/                     symlinks to the user's input files (read-only)
-├── staged_bams/                sorted BAMs awaiting the contig filter (BAM input only)
+├── staged_bams/                sorted BAMs awaiting pairing cleanup and the
+│                               contig filter (BAM input only)
 ├── bams/                       canonical analysis BAM + index, one per sample
 ├── beds/
 │   ├── {sample}.bed.gz         aligned intervals of the analysis BAM, bgzip -l 9
@@ -117,7 +127,9 @@ Both bundled builds define every reference key, so a default `hg38` or `hg19` ru
 ├── cleavage_profile/
 │   ├── {sample}_cleavage_profile_tss.bw
 │   └── {sample}_cleavage_profile_aggr.wig
-├── qc/                         per-sample samtools reports + contig validation reports
+├── qc/                         per-sample samtools, FastQC and fastp reports,
+│                               contig validation reports, and finaletoolkit/
+│                               (the fragmentomics summary for MultiQC)
 ├── multiqc/multiqc_report.html
 ├── config/                     resolved configuration for this run
 ├── workflow/                    Snakemake rules and scripts for this run

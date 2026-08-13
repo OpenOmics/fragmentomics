@@ -139,8 +139,9 @@ all_outputs.extend(
 
 # Project-level QC. The merged coverage workbook is a gather over every
 # per-sample coverage bed, and the MultiQC report is a gather over the
-# per-sample samtools reports, so requesting these two targets pulls in the
-# coverage and bam_stats rules for all samples.
+# per-sample samtools, FastQC and fastp reports plus a summary of the
+# finaletoolkit results, so requesting these two targets pulls in the coverage,
+# bam_stats, read QC and finaletoolkit_multiqc rules for all samples.
 all_outputs.append(join(coverage_dir, "coverage_summary.xlsx"))
 all_outputs.append(join(multiqc_dir, "multiqc_report.html"))
 

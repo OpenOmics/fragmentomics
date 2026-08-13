@@ -91,7 +91,8 @@ if input_type == "illumina_fastq":
         Adapter-trim and quality-filter paired-end Illumina FastQ reads, align
         them to the reference genome with bwa-mem2, then produce an
         analysis-ready coordinate-sorted BAM: proper-pair/primary/
-        mapping-quality filter -> fixmate -> orphan re-check -> sort -> markdup.
+        mapping-quality filter -> name sort -> fixmate -> orphan re-check ->
+        coordinate sort -> markdup.
 
         Duplicates are marked but deliberately *not* removed. markdup is the
         last stage of the pipe, downstream of every samtools view filter, so
@@ -100,24 +101,24 @@ if input_type == "illumina_fastq":
         records which ones are duplicates. Each downstream rule is then free to
         include or exclude them.
 
-        Filtering runs *before* fixmate so that orphaned mates can be cleaned
-        up. Dropping reads on flags or mapping quality can remove one mate of a
-        pair while keeping the other, and the survivor would still carry 0x2
-        plus mate coordinates pointing at a read that is no longer in the file.
-        Because the filter runs while the stream is still name-collated,
-        fixmate sees the survivor as a singleton and clears its paired flags
-        (0x1/0x2) and mate fields; the second, flag-only `view -f 2` then drops
-        those de-paired records. fixmate -r additionally removes unmapped and
-        secondary leftovers. Without this, downstream steps would infer
-        fragment coordinates from a mate that does not exist.
-
-        Only one sort is performed. samtools fixmate needs name-collated input,
-        which is exactly what bwa-mem2 emits for paired FastQ input (both mates
-        of a pair are adjacent), so the query-name sort that would otherwise
-        precede fixmate is redundant, and the filter and orphan re-check both
-        run inside that same name-collated stretch of the pipe. The single
+        Two sorts are performed, and each is required by the stage it feeds.
+        samtools fixmate needs query-name-ordered input - it pairs records by
+        walking adjacent reads of the same name - so `sort -n` precedes it
+        rather than relying on the ordering bwa-mem2 happens to emit. The
         coordinate sort that follows is the one markdup and every downstream
-        rule require.
+        rule require. Both spill to the node's temporary directory, so this
+        rule's lscratch allocation covers two passes over the read data.
+
+        Filtering runs *before* the name sort so that orphaned mates can be
+        cleaned up, and so the sort only handles reads that survive. Dropping
+        reads on flags or mapping quality can remove one mate of a pair while
+        keeping the other, and the survivor would still carry 0x2 plus mate
+        coordinates pointing at a read that is no longer in the file. With the
+        stream name-ordered, fixmate sees the survivor as a singleton and clears
+        its paired flags (0x1/0x2) and mate fields; the second, flag-only
+        `view -f 2` then drops those de-paired records. fixmate -r additionally
+        removes unmapped and secondary leftovers. Without this, downstream steps
+        would infer fragment coordinates from a mate that does not exist.
 
         Read filtering is driven by the frontend's --baseqscore and --mapscore
         thresholds, both inclusive lower bounds. fastp applies the base-quality
@@ -251,12 +252,13 @@ if input_type == "illumina_fastq":
 
             # Alignment and BAM finishing, fused into one pipe so no
             # intermediate BAM is written. Stage order matters:
-            #   view   filter on flags + mapping quality while the stream is
-            #          still name-collated, so orphans stay adjacent
+            #   view   filter on flags + mapping quality first, so the name
+            #          sort below only handles the reads that survive
+            #   sort -n query-name sort, the input ordering fixmate requires
             #   fixmate fill mate coordinates/ISIZE, add the ms tag markdup
             #          needs, and de-pair any mate whose partner was filtered
             #   view   drop those de-paired orphans (flag-only, no -q)
-            #   sort   the one coordinate sort, required by markdup
+            #   sort   coordinate sort, required by markdup
             #   markdup flag duplicates last so nothing can drop them
             \"${{bwa_bin}}\" mem \\
                 -t {threads} \\
@@ -266,6 +268,7 @@ if input_type == "illumina_fastq":
                 ${{tmp}}/{params.sid}.R2.trimmed.fastq.gz \\
             | samtools view -b -h -f {params.keep_flag} -F {params.drop_flag} \\
                 -q {params.map_quality} -@ {threads} - \\
+            | samtools sort -n -@ {threads} -T ${{tmp}}/nsort -O bam - \\
             | samtools fixmate -m -r -@ {threads} - - \\
             | samtools view -b -f {params.keep_flag} -@ {threads} - \\
             | samtools sort -@ {threads} -T ${{tmp}}/psort -O bam - \\
@@ -283,12 +286,27 @@ if input_type == "illumina_fastq":
             """)
 
 else:
-    # Where stage_bams writes. When the selected genome ships a sequence
-    # dictionary, staging lands in staged_bam_dir and filter_reference_contigs
-    # produces the canonical bams/{sid}.sorted.bam. Without a dictionary there
-    # is nothing to validate against, so staging writes bam_dir directly and
-    # the filter rule is not defined at all.
-    stage_dir = staged_bam_dir if sequence_dict else bam_dir
+    # The bam input path is a three-step chain, and every step but the last
+    # writes into staged_bam_dir:
+    #   stage_bams            sort + quality filter user alignments
+    #   remove_orphan_reads   repair the pairs that filtering broke
+    #   filter_reference_contigs  subset to the reference's contigs
+    # Whichever step runs last produces the canonical bams/{sid}.sorted.bam.
+    # When the selected genome ships no sequence dictionary there is nothing to
+    # validate against, so filter_reference_contigs is not defined at all and
+    # remove_orphan_reads writes bam_dir directly; otherwise it hands a
+    # temporary intermediate to the filter rule, which Snakemake deletes once
+    # that rule has consumed it (three copies of a whole-genome BAM on disk at
+    # once is a lot of space to hold for no reason).
+    stage_dir = staged_bam_dir
+    if sequence_dict:
+        paired_bam  = join(staged_bam_dir, "{sid}.paired.bam")
+        paired_out  = temp(paired_bam)
+        paired_bai  = temp(paired_bam + '.bai')
+    else:
+        paired_bam  = join(bam_dir, "{sid}.sorted.bam")
+        paired_out  = paired_bam
+        paired_bai  = paired_bam + '.bai'
 
     rule stage_bams:
         """
@@ -299,10 +317,15 @@ else:
         quality with `view -q`, and mean base quality with the filter
         expression `avg(qual) >= <threshold>`. Both are inclusive lower bounds
         and either is skipped entirely when its threshold is 0.
+
+        Both filters act on individual records, so either can keep one mate of
+        a pair and drop the other. Repairing that is remove_orphan_reads' job,
+        which is why this rule writes into the staging area rather than
+        producing the analysis BAM directly.
         @Input:
             User-provided BAM/CRAM/SAM alignments (gather).
         @Output:
-            Coordinate-sorted, indexed, filtered BAMs.
+            Coordinate-sorted, indexed, filtered BAMs in the staging area.
         """
         input:
             all_input_files
@@ -338,6 +361,113 @@ else:
                 --min-baseq {params.base_quality}
             """)
 
+    rule remove_orphan_reads:
+        """
+        Drop singletons and orphaned mates from a staged BAM, so every read
+        that reaches the analysis BAM has its mate beside it.
+
+        stage_bams filters on mapping quality and mean base quality, and both
+        act on individual records: a pair whose R1 passes and whose R2 fails
+        loses only R2, and the surviving R1 keeps its 0x2 (properly paired) flag
+        plus mate coordinates pointing at a record that is no longer in the
+        file. Every fragmentomics feature here is derived from a pair's
+        coordinates, so such a read is at best dead weight and at worst a
+        fragment inferred from a mate that does not exist. Reads whose mate went
+        unmapped are the same problem arriving from the input BAM itself.
+
+        The pipe is the same shape as the FastQ path's, for the same reason
+        (see align_fastq):
+          view    keep primary paired records with both mates mapped, which is
+                  also what makes the pairing invariant well defined - a
+                  secondary or supplementary record shares its name with a
+                  primary one, so "every name appears twice" cannot hold while
+                  they are present
+          sort -n query-name order, the input ordering fixmate requires
+          fixmate recompute mate coordinates/ISIZE and de-pair any read whose
+                  mate is missing, clearing its 0x1/0x2 flags and mate fields
+          view    drop those de-paired records, flags only
+          sort    back to coordinate order for every downstream rule
+        fixmate is run without -m: that flag exists to add the mate-score tag
+        samtools markdup needs, and this path does not mark duplicates - the
+        input BAM's own duplicate flags are preserved untouched.
+
+        Single-end input is passed through unchanged rather than emptied. A BAM
+        with no paired records at all has no orphans to remove but would not
+        survive `view -f 1`, so the read count of the result is checked and the
+        staged BAM is copied through with a warning if the pipe removed
+        everything. Both counts are read from the BAM indices rather than from a
+        pass over the reads, so the check is free in the normal case.
+
+        Verified against samtools 1.13 on a staged BAM carrying 710 orphans
+        (555,122 records): 554,412 records survive, flagstat reports 0
+        singletons, and every surviving read name appears exactly twice.
+        @Input:
+            Staged, coordinate-sorted BAM (scatter-per-sample).
+        @Output:
+            Coordinate-sorted, indexed BAM whose every read is one of a
+            complete, mapped pair.
+        """
+        input:
+            bam                 = join(staged_bam_dir, "{sid}.sorted.bam"),
+            bai                 = join(staged_bam_dir, "{sid}.sorted.bam.bai"),
+        output:
+            bam                 = paired_out,
+            bai                 = paired_bai,
+        container:
+            config['images']['finaletoolkit']
+        resources:
+            partition = allocated("partition", "remove_orphan_reads", cluster),
+            mem       = allocated("mem",  "remove_orphan_reads", cluster),
+            time      = allocated("time", "remove_orphan_reads", cluster),
+            gres      = allocated("gres", "remove_orphan_reads", cluster),
+        threads:
+            int(allocated("threads", "remove_orphan_reads", cluster))
+        params:
+            rname               = "remove_orphan_reads",
+            # 0x1 (paired) required; 2316 excludes unmapped (0x4), mate-unmapped
+            # (0x8), secondary (0x100) and supplementary (0x800) records. The
+            # mask deliberately omits 0x2 (proper pair), so discordant pairs are
+            # kept as long as both mates are present, and 0x400 (duplicate), so
+            # the input BAM's duplicate marking survives this step. keep_flag is
+            # used twice: once with drop_flag for the main filter, and once on
+            # its own after fixmate to drop the mates fixmate de-paired.
+            keep_flag           = "1",
+            drop_flag           = "2316",
+            tmpdir              = tmpdir,
+        shell:
+            dedent("""
+            if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+            tmp=$(mktemp -d -p \"{params.tmpdir}\")
+            trap 'rm -rf "${{tmp}}"' EXIT
+
+            samtools view -b -f {params.keep_flag} -F {params.drop_flag} \\
+                -@ {threads} {input.bam} \\
+            | samtools sort -n -@ {threads} -T ${{tmp}}/nsort -O bam - \\
+            | samtools fixmate -@ {threads} - - \\
+            | samtools view -b -f {params.keep_flag} -@ {threads} - \\
+            | samtools sort -@ {threads} -T ${{tmp}}/psort -O bam -o {output.bam} -
+
+            samtools index -@ {threads} {output.bam}
+
+            # Nothing left implies there was nothing paired to begin with:
+            # single-end input, which has no orphans but cannot survive -f 1.
+            # Both totals come from the .bai rather than from the reads.
+            kept=$(samtools idxstats {output.bam} \\
+                | awk '{{total += $3 + $4}} END {{print total + 0}}')
+            if [ "${{kept}}" -eq 0 ]; then
+                staged=$(samtools idxstats {input.bam} \\
+                    | awk '{{total += $3 + $4}} END {{print total + 0}}')
+                if [ "${{staged}}" -gt 0 ]; then
+                    echo "WARNING: no paired reads in {input.bam}, so there are" \\
+                         "no orphans to remove. Copying it through unchanged;" \\
+                         "note that this pipeline's fragment-level analyses" \\
+                         "expect paired-end data." >&2
+                    cp {input.bam} {output.bam}
+                    samtools index -@ {threads} {output.bam}
+                fi
+            fi
+            """)
+
 
 if input_type != "illumina_fastq" and sequence_dict:
 
@@ -357,15 +487,20 @@ if input_type != "illumina_fastq" and sequence_dict:
         scaffolds, often several hundred of them) are dropped. A shared contig
         name with a differing length means the BAM was aligned to a different
         build entirely, which subsetting cannot repair, so the rule fails.
+
+        Reads whose mate lies on a dropped contig are excluded along with the
+        contig, so subsetting cannot undo the pairing guarantee
+        remove_orphan_reads established upstream of it.
         @Input:
-            Staged, coordinate-sorted BAM (scatter-per-sample).
+            Staged, coordinate-sorted, pairing-cleaned BAM
+            (scatter-per-sample).
         @Output:
             BAM containing only the reference's contigs, plus a report of the
             comparison.
         """
         input:
-            bam                 = join(staged_bam_dir, "{sid}.sorted.bam"),
-            bai                 = join(staged_bam_dir, "{sid}.sorted.bam.bai"),
+            bam                 = join(staged_bam_dir, "{sid}.paired.bam"),
+            bai                 = join(staged_bam_dir, "{sid}.paired.bam.bai"),
         output:
             bam                 = join(bam_dir, "{sid}.sorted.bam"),
             bai                 = join(bam_dir, "{sid}.sorted.bam.bai"),
@@ -396,6 +531,214 @@ if input_type != "illumina_fastq" and sequence_dict:
                 --output {output.bam} \\
                 --report {output.report} \\
                 --threads {threads}
+            """)
+
+
+if input_type != "illumina_fastq":
+
+    # Read QC for the bam input path. The FastQ path gets both of these from
+    # align_fastq as a side effect of the work it is already doing - FastQC on
+    # the raw mates and on the BAM it just built, fastp on the reads it trims
+    # before alignment - so on a BAM run the aggregate report would otherwise
+    # have no FastQC or fastp section at all. Neither rule changes the
+    # analysis BAM; both only report on it.
+
+    rule fastqc_bam:
+        """
+        Read QC on the analysis BAM, the BAM path's counterpart to the
+        post-alignment FastQC that align_fastq runs.
+
+        A BAM run has no raw reads to inspect, but the analysis BAM itself is
+        a format FastQC reads natively (--format bam), so the post-alignment
+        half of the FastQ path's read QC can be produced for it: per-base and
+        per-sequence quality, GC content, read-length distribution, adapter
+        and overrepresented-sequence content.
+
+        Report names are derived by FastQC from its input filename rather than
+        chosen here: {sid}.sorted.bam -> {sid}.sorted_fastqc.zip, with the
+        HTML copy alongside. That is the same name align_fastq's
+        post-alignment report carries, so MultiQC labels the sample
+        identically on either input path and its FastQC section means the same
+        thing in both.
+
+        One caveat applies here exactly as it does to align_fastq's
+        post-alignment report: FastQC estimates duplication and
+        overrepresented sequences from the first 100,000 reads it sees, and in
+        a coordinate-sorted BAM those all come from the start of the first
+        contig instead of from across the library. Read the quality and
+        content modules from this report, and take the duplicate rate from
+        `samtools flagstat` (see bam_stats), which counts flags over the whole
+        file.
+        @Input:
+            Coordinate-sorted analysis BAM (scatter-per-sample).
+        @Output:
+            FastQC report for the analysis BAM.
+        """
+        input:
+            bam                 = join(bam_dir, "{sid}.sorted.bam"),
+        output:
+            zip                 = join(qc_dir, "{sid}.sorted_fastqc.zip"),
+            html                = join(qc_dir, "{sid}.sorted_fastqc.html"),
+        container:
+            config['images']['bwamem2']
+        resources:
+            partition = allocated("partition", "fastqc_bam", cluster),
+            mem       = allocated("mem",  "fastqc_bam", cluster),
+            time      = allocated("time", "fastqc_bam", cluster),
+            gres      = allocated("gres", "fastqc_bam", cluster),
+        threads:
+            int(allocated("threads", "fastqc_bam", cluster))
+        params:
+            rname               = "fastqc_bam",
+            qc_dir              = qc_dir,
+            tmpdir              = tmpdir,
+        shell:
+            dedent("""
+            if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+            tmp=$(mktemp -d -p \"{params.tmpdir}\")
+            trap 'rm -rf "${{tmp}}"' EXIT
+            mkdir -p {params.qc_dir}
+
+            # No --threads here: FastQC parallelizes across input files, not
+            # within one, and this rule hands it a single BAM. --dir keeps its
+            # temporary files on the node rather than in the output directory.
+            fastqc \\
+                --format bam \\
+                --dir \"${{tmp}}\" \\
+                --outdir {params.qc_dir} \\
+                {input.bam}
+            """)
+
+
+    rule fastp_bam:
+        """
+        fastp report for the analysis BAM, produced by converting it back to
+        FastQ on the fly.
+
+        On the FastQ path fastp is a processing step - it trims adapter
+        read-through and drops pairs below the --baseqscore mean-quality
+        threshold before alignment - and its report is a by-product of that
+        work. A BAM run cannot do any of it: the reads are already aligned,
+        and --mapscore/--baseqscore were already applied to them with samtools
+        during staging. What it can still have is the report, which is what
+        this rule produces: the analysis BAM is streamed back to FastQ and
+        fastp is pointed at the result with every transformation switched off,
+        so it acts purely as a reporter.
+
+        Nothing is written back out. fastp given neither --out1 nor --out2
+        discards the reads it read and writes only its reports, and the FastQ
+        pair it read lives in the node's temporary directory, so the step
+        leaves behind two report files and nothing else.
+
+        Trimming and both filters are disabled deliberately, so that every
+        number in the report describes the reads that are actually in the
+        analysis BAM. Left enabled, fastp would report adapter bases removed
+        and reads dropped that no downstream step will lose, which reads as
+        data loss this run never had - and worse, the same MultiQC section
+        would mean the opposite thing on a FastQ run, where those removals are
+        real. The cost is that the before/after halves of the report are
+        identical by construction; what is worth reading is everything that
+        describes the reads themselves - the per-base quality and content
+        curves, Q20/Q30 rates, GC content, duplication rate and the
+        insert-size distribution fastp estimates from the overlap between
+        mates. Adapter content is not lost either, it is in the FastQC report
+        for the same BAM (fastqc_bam).
+
+        Conversion is collate -> fastq rather than sort -> fastq. fastp reads
+        the two mate files in lockstep and needs the nth record of one to be
+        the mate of the nth record of the other, which is what collating by
+        name gives it, and collating is cheaper than a full coordinate sort.
+        The BAM stream between the two stages is uncompressed and never
+        touches disk, -n leaves the read names untouched so both mates keep
+        the same name as they would in a raw FastQ pair, and secondary and
+        supplementary alignments are excluded by `samtools fastq`'s own
+        default filter.
+
+        Paired or single-end mode is read off the sample's flagstat report
+        rather than by counting the BAM a second time: a staged BAM is
+        whatever the user provided, and pointing fastp's paired-end mode at an
+        unpaired BAM would fail the step. Reads whose mate did not survive
+        filtering (samtools calls these singletons) are left out of the
+        report, since they cannot be reported as pairs; there are normally
+        very few of them.
+        @Input:
+            Coordinate-sorted analysis BAM and the flagstat report bam_stats
+            wrote for it (scatter-per-sample).
+        @Output:
+            fastp JSON report, which is the one MultiQC parses, plus its HTML
+            copy.
+        """
+        input:
+            bam                 = join(bam_dir, "{sid}.sorted.bam"),
+            flagstat            = join(qc_dir, "{sid}.flagstat.txt"),
+        output:
+            json                = join(qc_dir, "{sid}.fastp.json"),
+            html                = join(qc_dir, "{sid}.fastp.html"),
+        container:
+            config['images']['bwamem2']
+        resources:
+            partition = allocated("partition", "fastp_bam", cluster),
+            mem       = allocated("mem",  "fastp_bam", cluster),
+            time      = allocated("time", "fastp_bam", cluster),
+            gres      = allocated("gres", "fastp_bam", cluster),
+        threads:
+            int(allocated("threads", "fastp_bam", cluster))
+        params:
+            rname               = "fastp_bam",
+            sid                 = "{sid}",
+            qc_dir              = qc_dir,
+            tmpdir              = tmpdir,
+            # Switches off everything fastp can do to a read, leaving only
+            # the measuring: adapter trimming, the mean/per-base quality
+            # filter, the post-trim length filter, and polyG tail trimming
+            # (which fastp turns on by itself for NextSeq/NovaSeq data).
+            qc_only             = "--disable_adapter_trimming "
+                                  "--disable_quality_filtering "
+                                  "--disable_length_filtering "
+                                  "--disable_trim_poly_g",
+            # fastp ignores anything above 16 worker threads.
+            fastp_threads       = min(int(allocated("threads", "fastp_bam", cluster)), 16),
+        shell:
+            dedent("""
+            if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+            tmp=$(mktemp -d -p \"{params.tmpdir}\")
+            trap 'rm -rf "${{tmp}}"' EXIT
+            mkdir -p {params.qc_dir}
+
+            # Read layout of the staged BAM, taken from the report bam_stats
+            # already wrote for it. Empty (no such line) is treated as
+            # single-end below.
+            paired=$(awk '/paired in sequencing/ {{print $1; exit}}' {input.flagstat})
+
+            # BAM -> FastQ. collate brings both mates of a pair together,
+            # which is what samtools fastq needs to write matched mate files;
+            # -u keeps the stream between the two uncompressed. Reads with
+            # neither mate flag go to the unpaired file, reads whose mate was
+            # filtered away to the singleton file.
+            samtools collate -u -O -@ {threads} {input.bam} ${{tmp}}/collate \\
+                | samtools fastq -n -@ {threads} \\
+                    -1 ${{tmp}}/{params.sid}.R1.fastq.gz \\
+                    -2 ${{tmp}}/{params.sid}.R2.fastq.gz \\
+                    -0 ${{tmp}}/{params.sid}.unpaired.fastq.gz \\
+                    -s ${{tmp}}/{params.sid}.singleton.fastq.gz \\
+                    -
+
+            if [ "${{paired:-0}}" -gt 0 ]; then
+                fastp \\
+                    --in1 ${{tmp}}/{params.sid}.R1.fastq.gz \\
+                    --in2 ${{tmp}}/{params.sid}.R2.fastq.gz \\
+                    {params.qc_only} \\
+                    --json {output.json} \\
+                    --html {output.html} \\
+                    --thread {params.fastp_threads}
+            else
+                fastp \\
+                    --in1 ${{tmp}}/{params.sid}.unpaired.fastq.gz \\
+                    {params.qc_only} \\
+                    --json {output.json} \\
+                    --html {output.html} \\
+                    --thread {params.fastp_threads}
+            fi
             """)
 
 
@@ -933,15 +1276,23 @@ rule merge_coverage_excel:
         """)
 
 
-# QC artifacts that only the FastQ input path produces: the FastQC reports
-# align_fastq writes on either side of the alignment, the samtools markdup
-# duplicate report, and the fastp trimming/filtering report. They are guaranteed
-# to exist by the time multiqc runs
-# (align_fastq also produces the BAM that bam_stats consumes), but they are
-# requested explicitly so the aggregate report's dependency on them is visible
-# in the DAG. Empty for a BAM-input run, where no such reports exist.
+# Read QC reports, i.e. everything in the aggregate report that describes the
+# reads rather than the alignments. Both input paths produce a FastQC report on
+# the analysis BAM and a fastp report, but from different rules and with
+# different meanings, so the list is assembled per path:
+#   • illumina_fastq -> FastQC on the raw mates and on the BAM, the samtools
+#     markdup duplicate report, and fastp's report on the trimming and
+#     filtering it performed before alignment (align_fastq).
+#   • bam            -> FastQC on the analysis BAM (fastqc_bam) and a
+#     descriptive-only fastp report of the same BAM converted back to FastQ
+#     (fastp_bam). There are no raw reads to report on, and duplicates are
+#     taken from flagstat rather than marked here, so neither a pre-alignment
+#     FastQC report nor a markdup report exists.
+# Each is guaranteed to exist by the time multiqc runs, but they are requested
+# explicitly so the aggregate report's dependency on them is visible in the
+# DAG.
 if input_type == "illumina_fastq":
-    fastq_qc_reports = (
+    read_qc_reports = (
         expand(join(qc_dir, "{sample}.R1_fastqc.zip"), sample=sample_stems)
         + expand(join(qc_dir, "{sample}.R2_fastqc.zip"), sample=sample_stems)
         + expand(join(qc_dir, "{sample}.sorted_fastqc.zip"), sample=sample_stems)
@@ -949,20 +1300,143 @@ if input_type == "illumina_fastq":
         + expand(join(qc_dir, "{sample}.fastp.json"), sample=sample_stems)
     )
 else:
-    fastq_qc_reports = []
+    read_qc_reports = (
+        expand(join(qc_dir, "{sample}.sorted_fastqc.zip"), sample=sample_stems)
+        + expand(join(qc_dir, "{sample}.fastp.json"), sample=sample_stems)
+    )
+
+
+# finaletoolkit results to summarise in the aggregate report, gathered over all
+# samples. The set is not fixed: most fragmentomics rules only exist when the
+# selected genome build supplies the reference files they need, so the gating
+# below mirrors the Snakefile's, target for target, and the summary covers
+# whichever rules actually ran. Fragment length bins and coverage need nothing
+# beyond the analysis BAM and are therefore always present.
+#
+# The keys double as command-line flags for scripts/finaletoolkit_multiqc.py
+# (underscores become dashes), so a key rename has to be made in both places.
+finaletoolkit_qc_inputs = {
+    'frag_length_bins': expand(
+        join(fragment_length_dir, "{sample}_frag_bin" + str(bin_size) + ".tsv"),
+        sample=sample_stems
+    ),
+    'coverage': expand(join(coverage_dir, "{sample}_coverage.bed"), sample=sample_stems),
+}
+
+if split_interval:
+    finaletoolkit_qc_inputs['frag_length_intervals'] = expand(
+        join(fragment_length_int_dir, "{sample}_frag_interval.bed"), sample=sample_stems
+    )
+
+if 'ref2bit' in genome_files:
+    finaletoolkit_qc_inputs['end_motifs'] = expand(
+        join(end_motifs_dir, "{sample}_endmotif.tsv"), sample=sample_stems
+    )
+    finaletoolkit_qc_inputs['mds'] = expand(
+        join(mds_dir, "{sample}_mds.tsv"), sample=sample_stems
+    )
+    if 'intervals' in genome_files:
+        finaletoolkit_qc_inputs['interval_end_motifs'] = expand(
+            join(interval_end_motifs_dir, "{sample}_endmotif_interval.tsv"),
+            sample=sample_stems
+        )
+        if 'chrom_sizes' in genome_files:
+            finaletoolkit_qc_inputs['delfi'] = expand(
+                join(delfi_dir, "{sample}_delfi.bed"), sample=sample_stems
+            )
+
+if 'tss' in genome_files and 'tss_interval' in genome_files:
+    finaletoolkit_qc_inputs['wps_aggr'] = expand(
+        join(wps_dir, "{sample}_wps_out_tss_aggr.wig"), sample=sample_stems
+    )
+    if 'chrom_sizes' in genome_files:
+        finaletoolkit_qc_inputs['adjusted_wps_aggr'] = expand(
+            join(adjust_wps_dir, "{sample}_wps_out_tss_adj_aggr.wig"), sample=sample_stems
+        )
+        finaletoolkit_qc_inputs['cleavage_aggr'] = expand(
+            join(cleavage_profile_dir, "{sample}_cleavage_profile_aggr.wig"), sample=sample_stems
+        )
+
+# The same dictionary as the argument list for the summary script.
+finaletoolkit_qc_args = ' '.join(
+    '--{0} {1}'.format(key.replace('_', '-'), ' '.join(paths))
+    for key, paths in finaletoolkit_qc_inputs.items()
+)
+
+
+rule finaletoolkit_multiqc:
+    """
+    Summarise the finaletoolkit results as MultiQC custom content, so the
+    fragmentomics measurements appear in the aggregate report alongside the
+    read and alignment QC.
+
+    MultiQC has no finaletoolkit module, and cannot be given one here, so
+    nothing any fragmentomics rule produces would otherwise reach the report -
+    its tables and wigs and bigwigs are simply files MultiQC does not
+    recognise. This rule reads them and rewrites what is summarisable as
+    custom content: the per-sample tables and profiles MultiQC renders
+    natively, plus four headline numbers (median fragment length, short
+    fragment fraction, MDS and mean coverage) that join the general statistics
+    table next to the samtools and FastQC columns. See
+    scripts/finaletoolkit_multiqc.py for the sections it writes and how each is
+    derived.
+
+    The output is a directory rather than a fixed file list because the set of
+    sections varies with the genome build's reference files (see
+    finaletoolkit_qc_inputs above); the script writes a section per input group
+    it was given. MultiQC scans qc/ recursively, so the directory only has to
+    land there to be picked up, and taking it as an input of multiqc keeps the
+    ordering explicit.
+
+    Only the files listed as inputs are read. Nothing here re-reads a BAM or
+    recomputes a measurement, so the step stays cheap as the cohort grows; the
+    per-interval end motif tables are the one large read, and the script takes
+    those in chunks rather than loading a sample at a time.
+    @Input:
+        Per-sample finaletoolkit results, gathered over all samples: fragment
+        length bins and coverage beds always, plus per-interval fragment
+        lengths, end motifs (genome-wide and per interval), MDS, DELFI bins
+        and the aggregate TSS profiles when the run produces them.
+    @Output:
+        Directory of MultiQC custom-content documents, one per section.
+    """
+    input:
+        **finaletoolkit_qc_inputs
+    output:
+        directory(join(qc_dir, "finaletoolkit")),
+    container:
+        config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "finaletoolkit_multiqc", cluster),
+        mem       = allocated("mem",  "finaletoolkit_multiqc", cluster),
+        time      = allocated("time", "finaletoolkit_multiqc", cluster),
+        gres      = allocated("gres", "finaletoolkit_multiqc", cluster),
+    threads:
+        int(allocated("threads", "finaletoolkit_multiqc", cluster))
+    params:
+        rname                   = "finaletoolkit_multiqc",
+        python_script           = join(bin_dir, 'finaletoolkit_multiqc.py'),
+        result_args             = finaletoolkit_qc_args,
+    shell:
+        dedent("""
+        python {params.python_script} \\
+            {params.result_args} \\
+            --output {output}
+        """)
 
 
 rule multiqc:
     """
     Aggregate the per-sample QC reports into a single interactive HTML report.
     Only the qc/ directory is scanned, so MultiQC does not walk the large
-    bigwig/bed outputs of the fragmentomics rules. The coverage workbook is
-    taken as an input so the report is generated once the project-level
-    coverage gather has finished.
+    bigwig/bed outputs of the fragmentomics rules; what it shows of those comes
+    from the custom-content sections finaletoolkit_multiqc writes into qc/. The
+    coverage workbook is taken as an input so the report is generated once the
+    project-level coverage gather has finished.
     @Input:
-        Per-sample samtools stats/flagstat/idxstats reports (gather), plus the
-        FastQC and markdup reports on a FastQ run, and the merged coverage
-        workbook.
+        Per-sample samtools stats/flagstat/idxstats reports and read QC reports
+        (gather), the finaletoolkit custom-content directory, and the merged
+        coverage workbook.
     @Output:
         MultiQC HTML report.
     """
@@ -970,7 +1444,8 @@ rule multiqc:
         stats                   = expand(join(qc_dir, "{sample}.samtools.stats.txt"), sample=sample_stems),
         flagstat                = expand(join(qc_dir, "{sample}.flagstat.txt"), sample=sample_stems),
         idxstats                = expand(join(qc_dir, "{sample}.idxstats.txt"), sample=sample_stems),
-        fastq_qc                = fastq_qc_reports,
+        read_qc                 = read_qc_reports,
+        finaletoolkit           = join(qc_dir, "finaletoolkit"),
         xlsx                    = coverage_xlsx,
     output:
         report                  = multiqc_report,

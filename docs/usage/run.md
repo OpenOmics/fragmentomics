@@ -55,9 +55,10 @@ Each of the following arguments are required. Failure to provide a required argu
 >   (but kept) before the analysis steps run. See
 >   [FastQ alignment](../pipeline/fastq-alignment.md).
 > - **BAM input** runs the *full pipeline minus alignment*. Provided alignments
->   are staged (quality filtered, coordinate-sorted and indexed), checked
->   against the selected genome build's sequence dictionary, and subset to the
->   contigs the two share. See
+>   are staged (quality filtered, coordinate-sorted and indexed), stripped of
+>   singletons and of the orphaned mates that per-read filtering leaves behind,
+>   checked against the selected genome build's sequence dictionary, and subset
+>   to the contigs the two share. See
 >   [BAM normalization](../pipeline/bam-normalization.md) and
 >   [Reference contig filter](../pipeline/contig-filter.md).
 
@@ -349,7 +350,7 @@ module load singularity snakemake
 The `--output` directory holds one subdirectory per analysis, plus project-level QC. The full layout is documented in [Pipeline overview §4](../pipeline/overview.md#4-output-directory-layout); the files to look at first are:
 
   `multiqc/multiqc_report.html`
-> **Aggregate QC across all samples.** Alignment rates, duplicate rates, insert-size distributions and per-contig read counts, for every sample side by side. See [Quality control](../pipeline/quality-control.md).
+> **Aggregate QC across all samples.** Alignment rates, duplicate rates, read quality, insert-size distributions and per-contig read counts, plus a **Fragmentomics** section summarizing the analysis results themselves — fragment lengths, end motifs, MDS, DELFI and the TSS profiles — for every sample side by side. Written for either input type. See [Quality control](../pipeline/quality-control.md).
 
 ---
   `coverage/coverage_summary.xlsx`

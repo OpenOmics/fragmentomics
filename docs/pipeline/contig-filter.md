@@ -5,7 +5,7 @@
 This step applies only to the **BAM input path**. It runs once per sample, after [BAM normalization](bam-normalization.md), and produces the canonical analysis BAM:
 
 ```text
-staged_bams/{sample}.sorted.bam
+staged_bams/{sample}.paired.bam
          │
          │  filter_reference_contigs
          ▼
@@ -21,7 +21,7 @@ The step does two things at once:
 
 !!! note
 
-    The step is only defined when the selected genome build has a `dict` entry in `config/genome.json`. Both bundled builds (`hg19`, `hg38`) do. For a build without one there is nothing to compare against, so `stage_bams` writes `bams/` directly and this step is absent from the workflow — existing configurations keep working unchanged.
+    The step is only defined when the selected genome build has a `dict` entry in `config/genome.json`. Both bundled builds (`hg19`, `hg38`) do. For a build without one there is nothing to compare against, so [`remove_orphan_reads`](bam-normalization.md#3-what-remove_orphan_reads-does) writes `bams/` directly and this step is absent from the workflow — existing configurations keep working unchanged.
 
 ## 2. What is compared
 
@@ -94,7 +94,7 @@ The final `samtools view -b` rebuilds the name-to-index mapping against the redu
 
 A read can sit on a kept contig while its mate sits on a dropped one. When the mate's contig disappears, `samtools` cannot resolve `RNEXT` and rewrites it to `*` — but it leaves `PNEXT` and the mate-mapped flag untouched. The result is a self-inconsistent record claiming a mapped mate at a position on no contig.
 
-Such reads are excluded entirely, and the count is recorded in the report as `reads_dropped_dangling_mate`. This costs nothing analytically: a cross-contig pair is never a proper pair, and every FinaleToolkit analysis in this pipeline works from proper pairs, so these reads would have been ignored downstream regardless.
+Such reads are excluded entirely, and the count is recorded in the report as `reads_dropped_dangling_mate`. This costs nothing analytically: a cross-contig pair is never a proper pair, and every FinaleToolkit analysis in this pipeline works from proper pairs, so these reads would have been ignored downstream regardless. It also means subsetting cannot re-introduce the orphans that [`remove_orphan_reads`](bam-normalization.md#3-what-remove_orphan_reads-does) just removed: both members of a cross-contig pair leave together, one with its contig and the other on this filter.
 
 ### 4.3 What is preserved
 
@@ -106,7 +106,7 @@ Every run writes `qc/{sample}.contig_validation.txt`. It is a tab-delimited reco
 
 ```text
 # Reference contig validation
-bam	/data/$USER/output/staged_bams/Sample_A.sorted.bam
+bam	/data/$USER/output/staged_bams/Sample_A.paired.bam
 sequence_dictionary	/data/OpenOmics/references/fragmentomics/hg38_clean.dict
 # Comparison uses @SQ SN and LN only; UR and M5 ignored.
 reference_contigs	25

@@ -38,12 +38,14 @@ fastp --detect_adapter_for_pe \                    adapter trimming, then
   │                                                (to $tmp, not kept)
 ${bwa_bin} mem -t <threads> -R "@RG\tID:<sample>\tSM:<sample>\tPL:ILLUMINA\tLB:<sample>" \
     <bwamem2_index> $tmp/<sample>.R1.trimmed.fastq.gz $tmp/<sample>.R2.trimmed.fastq.gz
-  │                                          ── still name-collated ──┐
+  │                                                                   │
   ├─► samtools view -f 2 -F 2828 -q <mapscore>   flag + MAPQ filter   │
+  ├─► samtools sort -n        query-name sort, what fixmate needs     │
+  │                                          ── name-ordered ─────────┤
   ├─► samtools fixmate -m -r  fill mate coords, add ms tags,          │
   │                           de-pair mates left behind by the filter │
   ├─► samtools view -f 2      drop those de-paired orphans   ─────────┘
-  ├─► samtools sort           the one coordinate sort
+  ├─► samtools sort           coordinate sort
   └─► samtools markdup -f     flag optical/PCR duplicates, write dup report
          │
          ▼
@@ -54,8 +56,8 @@ ${bwa_bin} mem -t <threads> -R "@RG\tID:<sample>\tSM:<sample>\tPL:ILLUMINA\tLB:<
 
 Three properties of this ordering are deliberate:
 
-- **Only one sort.** `samtools fixmate` requires name-collated input, and that is exactly what `bwa-mem2` emits for paired FastQ input — both mates of a pair come out adjacent. The query-name sort that conventionally precedes `fixmate` is therefore redundant work on a whole-genome BAM, and only the coordinate sort that follows it is kept. That one is not optional: `markdup` and every downstream analysis need coordinate order.
-- **Filtering runs before `fixmate`,** inside the name-collated stretch of the pipe, so that mates orphaned by the filter can be cleaned up. See [§3.5](#35-orphaned-mates).
+- **Two sorts, each required by the stage it feeds.** `samtools fixmate` pairs records by walking adjacent reads of the same name, so it requires query-name-ordered input and `sort -n` is run to guarantee it rather than depending on the order `bwa-mem2` happens to emit. The coordinate sort that follows is equally non-optional: `markdup` and every downstream analysis need coordinate order. Both spill to the node's temporary directory, so the step's `lscratch` allocation covers two passes over the read data.
+- **Filtering runs before the name sort,** so that mates orphaned by the filter can be cleaned up downstream and so the sort only handles reads that survive. See [§3.5](#35-orphaned-mates).
 - **`markdup` runs last, after every filter.** See [§3.3](#33-duplicate-marking).
 
 ### 3.1 Choosing the `bwa-mem2` binary
@@ -180,12 +182,13 @@ Three stages cooperate to remove them, which is the reason the filter runs where
 
 ```text
 samtools view -f 2 -F 2828 -q <mapscore>   ── strands one mate of some pairs
+samtools sort -n                           ── name order, so mates are adjacent
 samtools fixmate -m -r                     ── sees the survivor as a singleton,
                                                clears 0x1/0x2 and the mate fields
 samtools view -f 2                          ── drops what fixmate de-paired
 ```
 
-`fixmate` can only do this because the filter ran while the stream was still name-collated, straight off `bwa-mem2` and before the coordinate sort — mates are still adjacent, so a missing partner is visible. Once the BAM is coordinate-sorted the two mates are megabases apart and `fixmate` cannot pair them at all; that is why this guard exists on the FastQ path but not on the [BAM path](bam-normalization.md#22-read-filtering), where re-collating would mean a second whole-file sort.
+`fixmate` can only do this because the stream reaches it in query-name order and before the coordinate sort — mates are adjacent, so a missing partner is visible. Once the BAM is coordinate-sorted the two mates are megabases apart and `fixmate` cannot pair them at all; that is why this guard exists on the FastQ path but not on the [BAM path](bam-normalization.md#22-read-filtering), where the input arrives already coordinate-sorted and re-collating it would mean an extra whole-file pass in a step whose only job is staging.
 
 The three stages have distinct jobs, and the last one is what makes the guarantee:
 
@@ -216,7 +219,7 @@ Verified against `samtools 1.13`: a pair whose second mate is filtered out has i
 }
 ```
 
-The `lscratch:200` request backs the temporary directories used by the `samtools sort` and `markdup` stages and by FastQC, and it also holds the adapter-trimmed FastQ pair that `fastp` hands to the aligner (roughly the size of the input FastQ files); these are created under `--tmp-dir` and removed when the step exits, including on failure. Edit `config/cluster.json` in the output directory to change any of these for a given run.
+The `lscratch:200` request backs the temporary directories used by the two `samtools sort` stages (name and coordinate) and by `markdup` and FastQC, and it also holds the adapter-trimmed FastQ pair that `fastp` hands to the aligner (roughly the size of the input FastQ files); these are created under `--tmp-dir` and removed when the step exits, including on failure. Edit `config/cluster.json` in the output directory to change any of these for a given run.
 
 ## 5. Verifying the result
 
