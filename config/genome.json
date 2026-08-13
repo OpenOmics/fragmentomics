@@ -14,7 +14,7 @@
         },
         "hg38": {
             "chrom_sizes": "/data/OpenOmics/references/fragmentomics/hg38.chrom.sizes",
-            "intervals": "/data/OpenOmics/references/fragmentomics/hg38_5kb_intervals.bed",
+            "intervals": "/data/OpenOmics/references/fragmentomics/hg38/hg38_1mb_intervals.bed",
             "ref2bit": "/data/OpenOmics/references/fragmentomics/hg38.2bit",
             "reference_fa": "/data/OpenOmics/references/fragmentomics/hg38_clean.fa",
             "bwamem2_index": "/data/OpenOmics/references/fragmentomics/hg38/bwamem2_index/hg38_clean.fa",
