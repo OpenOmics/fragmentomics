@@ -53,6 +53,7 @@ from os.path import join
 # Local imports
 from scripts.common import (
     allocated,
+    interval_label,
     provided,
     references,
     str_bool
@@ -79,14 +80,22 @@ samples                         = config["samples"]                            #
 genome                          = config['options']['genome']                  # Genome build
 genome_files                    = config["references"][genome]                 # Reference files for genome build
 ref2bit                         = 'ref2bit' in genome_files                    # Is there a 2bit fiel for genome build
-intervals                       = 'intervals' in genome_files                  # Is there a interval file for genome build
+# The genomic interval BED is no longer a bundled reference. It is tiled from
+# the build's reference FastA at runtime by make_intervals, at the width given
+# by --interval, so what gates the interval-based analyses is whether that FastA
+# exists for the build rather than whether a pre-made BED was shipped with it.
+intervals                       = 'reference_fa' in genome_files               # Can an interval file be built for genome build
 chrom_sizes                     = 'chrom_sizes' in genome_files                # Is there a Chromosome sizes file for genome build
 tss                             = 'tss' in genome_files                        # Is there a TSS file for genome build
 tss_interval                    = 'tss_interval' in genome_files               # Is there a Is there a TSS interval file for genome build
-split_interval                  = int(config['options']['split_interval'])   
+split_interval                  = int(config['options']['split_interval'])
 max_fragment_len                = int(config['options']['fragment_maximum'])
 min_fragment_len                = int(config['options']['fragment_minimum'])
 bin_size                        = int(config['options']['bin_size'])
+# Width of the windows the reference is tiled into, and the SI-prefixed label
+# derived from it that names the resulting BED (i.e. 1000000 -> '1mb').
+interval_width                  = int(config['options']['interval'])
+interval_name                   = interval_label(interval_width)
 
 # directories
 data_dir                         = config["project"]["datapath"]
@@ -156,7 +165,10 @@ if config["project"]["input_type"] != "illumina_fastq" and genome_files.get("dic
         expand(join(qc_dir, "{sample}.contig_validation.txt"), sample=samples)
     )
 
-if split_interval:
+# Summarizing fragment length per window needs the window definitions, so this
+# is gated on the interval BED being buildable as well as on --split-interval,
+# the same way the two analyses below are.
+if split_interval and intervals:
     all_outputs.extend(
         expand(
             join(fragment_length_int_dir, "{sample}_frag_interval.bed"),

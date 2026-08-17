@@ -4,6 +4,38 @@ import os
 from textwrap import dedent
 
 
+def local_tmp_dir(configured):
+    """Resolve a --tmp-dir that names a SLURM variable for a run that has no
+    cluster job to name it after. See the tmpdir assignment below for why this
+    is needed. The configured path is returned unchanged when it references no
+    SLURM variable, since then there is nothing to resolve.
+    @param configured <str>:
+        The --tmp-dir recorded in config.json, e.g. /lscratch/$SLURM_JOBID/
+    @return <str>:
+        A temporary directory that this machine can actually write to
+    """
+    slurm_vars = (
+        '${SLURM_JOBID}', '$SLURM_JOBID', '${SLURM_JOB_ID}', '$SLURM_JOB_ID'
+    )
+    if not any(var in configured for var in slurm_vars):
+        return configured
+
+    # A local run started from an interactive allocation (sinteractive) does
+    # have a job id, and reusing it keeps node-local disk in play.
+    job_id = os.environ.get('SLURM_JOBID', os.environ.get('SLURM_JOB_ID', ''))
+    if job_id:
+        resolved = configured
+        for var in slurm_vars:
+            resolved = resolved.replace(var, job_id)
+        # /lscratch/$SLURM_JOBID only exists if the allocation asked for the
+        # lscratch gres, so the substitution is usable only when the directory
+        # it names is really there.
+        if os.path.isdir(resolved):
+            return resolved
+
+    return os.environ.get('TMPDIR', '/tmp')
+
+
 # configuration
 split_interval                  = int(config['options']['split_interval'])   
 max_fragment_len                = int(config['options']['fragment_maximum'])
@@ -11,6 +43,11 @@ min_fragment_len                = int(config['options']['fragment_minimum'])
 right_flank                     = int(config['options']['right_tss_flank'])
 left_flank                      = int(config['options']['left_tss_flank'])
 bin_size                        = int(config['options']['bin_size'])
+# Width of the fixed-size genomic windows make_intervals tiles the reference
+# into, as a whole number of bases (--interval normalizes the user's SI-prefixed
+# base unit), plus the short label derived from it that names the BED.
+interval_width                  = int(config['options']['interval'])
+interval_name                   = interval_label(interval_width)
 sample_stems                    = config['samples']
 # Read filtering thresholds from the frontend's --mapscore/--baseqscore. Both
 # are inclusive lower bounds (a read is kept when its score is >= the value)
@@ -24,7 +61,9 @@ min_base_quality                = int(config['options']['baseqscore'])
 genome_files                    = config["references"][genome]
 chrom_sizes                     = genome_files["chrom_sizes"]
 ref2bit                         = genome_files["ref2bit"]
-intervals                       = genome_files["intervals"]
+# Note: the genomic interval BED is not a bundled reference. It is generated per
+# run by make_intervals, so its path is derived from the output directory below
+# rather than read from config/genome.json.
 tss                             = genome_files['tss']
 tss_interval                    = genome_files['tss_interval']
 gap                             = genome_files.get("gap", None)
@@ -41,13 +80,26 @@ bwamem2_index                   = genome_files.get("bwamem2_index", None)
 # stages ready-made BAMs (bam); both converge on bams/{sample}.sorted.bam.
 input_type                      = config["project"]["input_type"]
 
+# Executor the frontend recorded for this run: 'slurm' submits every rule as
+# its own cluster job, 'local' runs them all on the current machine.
+run_mode                        = config['options']['mode']
+
 # directories
 data_dir                         = config["project"]["datapath"]
 all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
 inputs_dir                       = join(output_dir, 'inputs')
 bin_dir                          = join(output_dir, 'workflow', 'scripts')
-tmpdir                           = config['options']['tmp_dir']
+# Scratch space handed to every rule that stages intermediate files, as its
+# params.tmpdir. --tmp-dir defaults to /lscratch/$SLURM_JOBID, which is right
+# only under the slurm executor: each rule runs in its own allocation, so the
+# job id has to stay unexpanded here and be filled in by the shell of whichever
+# job ends up running the rule. A local run has no allocation to name, and
+# because Snakemake runs shell blocks under `set -u` the unexpanded reference
+# aborts the rule outright with "SLURM_JOBID: unbound variable" before it does
+# any work. So resolve the path up front for anything but a cluster job.
+tmpdir                           = config['options']['tmp_dir'] if run_mode == 'slurm' \
+                                   else local_tmp_dir(config['options']['tmp_dir'])
 bam_dir                          = join(output_dir, 'bams')
 # Landing area for the bam input path. stage_bams sorts user BAMs here, then
 # filter_reference_contigs subsets them into bam_dir. Kept as a sibling of
@@ -55,6 +107,7 @@ bam_dir                          = join(output_dir, 'bams')
 # path separators, so bams/staged/x would also satisfy bams/{sid}.
 staged_bam_dir                   = join(output_dir, 'staged_bams')
 bed_dir                          = join(output_dir, 'beds')
+intervals_dir                    = join(output_dir, 'intervals')
 coverage_dir                     = join(output_dir, 'coverage')
 fragment_length_dir              = join(output_dir, 'frag_length_bins')
 fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
@@ -71,6 +124,14 @@ multiqc_dir                      = join(output_dir, 'multiqc')
 # project-level (non scatter-per-sample) outputs
 coverage_xlsx                    = join(coverage_dir, 'coverage_summary.xlsx')
 multiqc_report                   = join(multiqc_dir, 'multiqc_report.html')
+# Fixed-size windows tiling the reference, built once per run by make_intervals
+# and shared by every interval-based analysis. The width is in the filename so a
+# run at a different --interval writes a new BED rather than silently reusing an
+# existing one built at another size.
+intervals                        = join(
+                                     intervals_dir,
+                                     f'{genome}_{interval_name}_intervals.bed'
+                                   )
 
 # default resources
 default_threads                  = cluster['__default__']['threads']
@@ -883,9 +944,67 @@ rule frag_length_bins:
         """)
 
 
+rule make_intervals:
+    """
+    Tile the reference genome into fixed-size windows, as the interval BED the
+    interval-based analyses summarize over.
+
+    These windows used to be built by hand and their path stored in
+    config/genome.json, which meant the size was fixed per genome build and
+    changing it was an out-of-band edit to a shared reference. They are now
+    derived from the build's reference FastA at the width the run asked for
+    (--interval), so the window size is a property of the run and is recorded in
+    both config.json and the output filename.
+
+    Gathers over nothing and scatters over nothing: one BED per run, shared by
+    every sample and every interval-based analysis downstream. The FastA is
+    streamed a line at a time to sum contig lengths, so the memory cost is flat
+    regardless of genome size, but a ~3 GB assembly still takes a few minutes to
+    read through.
+
+    @Input:
+        Reference FastA for the genome build (project-level).
+    @Output:
+        BED of contiguous, non-overlapping windows tiling every contig in the
+        FastA, named for the width they were built at.
+    """
+    output:
+        bed                     = intervals,
+    container:
+        config['images']['finaletoolkit']
+    resources:
+        partition = allocated("partition", "make_intervals", cluster),
+        mem       = allocated("mem",  "make_intervals", cluster),
+        time      = allocated("time", "make_intervals", cluster),
+        gres      = allocated("gres", "make_intervals", cluster),
+    threads:
+        int(allocated("threads", "make_intervals", cluster))
+    params:
+        rname                   = "make_intervals",
+        python_script           = join(bin_dir, 'fragment_genome.py'),
+        # Declared as a param rather than an input, matching every other
+        # reference artifact in this workflow. The FastA lives on the shared
+        # reference filesystem and is not produced by any rule, so listing it as
+        # an input only makes DAG construction fail wherever that filesystem is
+        # absent (e.g. CI dry-runs).
+        reference_fa            = reference_fa,
+        interval_width          = interval_width,
+    shell:
+        dedent("""
+        python {params.python_script} \\
+            {params.reference_fa} \\
+            {params.interval_width} \\
+            -o {output.bed}
+        """)
+
+
 rule frag_length_intervals:
     input:
         bam                     = join(bam_dir, "{sid}.sorted.bam"),
+        # Generated by make_intervals rather than read from a bundled reference,
+        # so unlike the other reference artifacts in this workflow it is a real
+        # input: it is what puts make_intervals in the DAG ahead of this rule.
+        intervals               = intervals,
     output:
         bed                     = join(fragment_length_int_dir, "{sid}_frag_interval.bed")
     container: 
@@ -902,11 +1021,10 @@ rule frag_length_intervals:
         map_quality             = min_mapping_quality,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
-        intervals               = intervals
     shell:
         dedent("""
         finaletoolkit \\
-            frag-length-intervals {input.bam} {params.intervals} \\
+            frag-length-intervals {input.bam} {input.intervals} \\
             -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
@@ -953,6 +1071,7 @@ rule end_motifs:
 rule interval_end_motifs:
     input:
         bam                     = join(bam_dir, "{sid}.sorted.bam"),
+        intervals               = intervals,
     output:
         tsv                     = join(interval_end_motifs_dir, "{sid}_endmotif_interval.tsv"),
     container: 
@@ -968,7 +1087,6 @@ rule interval_end_motifs:
         rname                   = "interval_end_motifs",
         map_quality             = min_mapping_quality,
         ref2bit                 = ref2bit,
-        intervals               = intervals,
         min_len                 = min_fragment_len,
         max_len                 = max_fragment_len,
         tmpdir                  = tmpdir
@@ -979,7 +1097,7 @@ rule interval_end_motifs:
         trap 'ls -al ${{tmp}}; rm -rf "${{tmp}}"' EXIT
 
         finaletoolkit \\
-            interval-end-motifs {input.bam} {params.ref2bit} {params.intervals} \\
+            interval-end-motifs {input.bam} {params.ref2bit} {input.intervals} \\
             -q {params.map_quality} \\
             --min-length {params.min_len} \\
             --max-length {params.max_len} \\
@@ -1017,6 +1135,7 @@ rule mds:
 rule delfi:
     input:
         bam                     = join(bam_dir, "{sid}.sorted.bam"),
+        intervals               = intervals,
     output:
         bed                     = join(delfi_dir, "{sid}_delfi.bed"),
     container: 
@@ -1033,12 +1152,11 @@ rule delfi:
         map_quality             = min_mapping_quality,
         chrom_sizes             = chrom_sizes,
         ref2bit                 = ref2bit,
-        intervals               = intervals,
         blacklist_cmd           = f" --blacklist {blacklist}" if blacklist else "",
         gap_cmd                 = f" -g {gap}" if gap else ""
     shell:
         dedent("""
-        finaletoolkit delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {params.intervals} \\
+        finaletoolkit delfi {input.bam} {params.chrom_sizes} {params.ref2bit} {input.intervals} \\
             -q {params.map_quality}{params.blacklist_cmd}{params.gap_cmd} \\
             -o {output.bed} \\
             -t {threads} \\
@@ -1323,7 +1441,10 @@ finaletoolkit_qc_inputs = {
     'coverage': expand(join(coverage_dir, "{sample}_coverage.bed"), sample=sample_stems),
 }
 
-if split_interval:
+# 'reference_fa' stands in for the interval BED in the gating below: the BED is
+# tiled from that FastA by make_intervals rather than shipped with the build, so
+# its presence is what decides whether the interval-based analyses can run.
+if split_interval and 'reference_fa' in genome_files:
     finaletoolkit_qc_inputs['frag_length_intervals'] = expand(
         join(fragment_length_int_dir, "{sample}_frag_interval.bed"), sample=sample_stems
     )
@@ -1335,7 +1456,7 @@ if 'ref2bit' in genome_files:
     finaletoolkit_qc_inputs['mds'] = expand(
         join(mds_dir, "{sample}_mds.tsv"), sample=sample_stems
     )
-    if 'intervals' in genome_files:
+    if 'reference_fa' in genome_files:
         finaletoolkit_qc_inputs['interval_end_motifs'] = expand(
             join(interval_end_motifs_dir, "{sample}_endmotif_interval.tsv"),
             sample=sample_stems

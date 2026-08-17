@@ -52,6 +52,12 @@
         "time": "04:00:00",
         "partition": "norm"
     },
+    "make_intervals": {
+        "threads": 1,
+        "mem": "2G",
+        "time": "01:00:00",
+        "partition": "norm"
+    },
     "frag_length_intervals": {
         "threads": 16,
         "mem": "8G",
