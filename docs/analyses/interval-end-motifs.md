@@ -6,7 +6,7 @@
 
 The per-region counterpart of [`end-motifs`](end-motifs.md). Instead of one 256-entry frequency vector for the whole genome, it produces one vector per genomic window, so nuclease preference becomes a spatial signal. Regions where the end-motif profile departs from the genome average point to locally different chromatin accessibility or nuclease activity.
 
-In this pipeline the windows are the 5 kb intervals tiling the genome for the selected build, so the output is a wide table: 5 kb windows down the rows, 4-mer motifs across the columns.
+In this pipeline the windows are the fixed-size intervals tiling the genome, built at the start of each run at the width given by [`--interval`](../usage/run.md) (default `1mb`), so the output is a wide table: windows down the rows, 4-mer motifs across the columns.
 
 ## 2. As the pipeline runs it
 
@@ -37,7 +37,7 @@ finaletoolkit interval-end-motifs bams/{sample}.sorted.bam <ref2bit> <intervals>
 ---
   `intervals`
 > **Windows to tabulate motifs over.**
-> *value:* the `intervals` file for the selected build — 5 kb windows tiling the genome
+> *value:* `intervals/{genome}_{size}_intervals.bed`, tiled from the selected build's reference FastA at the [`--interval`](../usage/run.md) width
 
 ---
   `-k`
@@ -69,14 +69,14 @@ finaletoolkit interval-end-motifs bams/{sample}.sorted.bam <ref2bit> <intervals>
 
 `interval_end_motifs/{sample}_endmotif_interval.tsv` — a table with one row per interval and one column per 4-mer motif, holding that motif's frequency within the interval.
 
-This is the largest per-sample text output in the pipeline: genome-wide 5 kb windows against 256 motif columns runs to hundreds of thousands of rows. Its memory allocation is correspondingly the largest of the motif steps.
+This is the largest per-sample text output in the pipeline: genome-wide windows against 256 motif columns. At the default `--interval 1mb` that is a few thousand rows; a narrow width such as `5kb` runs to hundreds of thousands. Its memory allocation is correspondingly the largest of the motif steps.
 
 ## 4. Controlling it
 
 | What | How |
 |------|-----|
 | Fragment length window | `--fragment-minimum`, `--fragment-maximum` |
-| Which windows | the `intervals` entry of `config/genome.json` for the selected build |
+| Which windows | `--interval`, which sets the width the windows are tiled at |
 | Reference sequence | the `ref2bit` entry for the selected build |
 | Threads / memory / walltime | the `interval_end_motifs` entry of `config/cluster.json` |
 
@@ -89,11 +89,11 @@ This is the largest per-sample text output in the pipeline: genome-wide 5 kb win
 }
 ```
 
-The 96 GB allocation reflects the size of the interval × motif table held in memory while it is assembled. If this step is killed for exceeding memory, either raise `mem` or use a coarser interval file.
+The 96 GB allocation reflects the size of the interval × motif table held in memory while it is assembled. If this step is killed for exceeding memory, either raise `mem` or pass a coarser `--interval` width.
 
 ## 5. Requires
 
-`ref2bit` **and** `intervals` for the selected genome build. Both bundled builds provide both.
+`ref2bit` **and** `reference_fa` (which the interval BED is tiled from) for the selected genome build. Both bundled builds provide both.
 
 ## 6. Related
 

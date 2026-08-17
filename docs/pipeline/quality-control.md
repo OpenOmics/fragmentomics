@@ -114,7 +114,7 @@ What is **not** in the report is anything per-interval, per-bin or per-base: the
 
 Which sections exist depends on the run: most analysis steps only run when the selected genome build supplies the reference files they need (see [Reference files](references.md)), and the interval fragment lengths additionally need a non-zero [`--split-interval`](../usage/run.md#22-analysis-options). The summary covers whichever steps did run. Fragment length and coverage need nothing beyond the analysis BAM, so those are always present.
 
-The profile plots are downsampled to keep the report interactive: the DELFI profile has hundreds of thousands of 5 kb bins per sample, averaged into 500 points of a few megabases each — the scale the fragmentation profile is normally read at — and the TSS profiles are reduced to roughly one point per 8 bp of their ±2 kb window. The full-resolution values are in the analysis outputs themselves; these sections are for comparing samples at a glance, not for measuring.
+The profile plots are downsampled to keep the report interactive: the DELFI profile is averaged into 500 points — the scale the fragmentation profile is normally read at, and already close to full resolution at the default `--interval 1mb` — and the TSS profiles are reduced to roughly one point per 8 bp of their ±2 kb window. The full-resolution values are in the analysis outputs themselves; these sections are for comparing samples at a glance, not for measuring.
 
 ## 4. Merged coverage workbook (`merge_coverage_excel`)
 

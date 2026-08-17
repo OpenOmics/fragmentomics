@@ -50,11 +50,17 @@ The four positionals must be given in this order:
 ---
   `bins_file`
 > **Bins to compute DELFI over.**
-> *value:* the `intervals` file for the selected build — 5 kb windows
+> *value:* `intervals/{genome}_{size}_intervals.bed`, tiled from the selected build's reference FastA at the [`--interval`](../usage/run.md) width (default `1mb`)
 >
-> !!! warning "The bundled bins are 5 kb, not 100 kb"
+> !!! warning "The bins are not the publication's 100 kb merged to 5 Mb"
 >
->     The original DELFI methodology uses 100 kb bins merged to 5 Mb. This pipeline passes its general-purpose 5 kb interval file, giving finer bins than the publication. Combined with `--no-merge-bins` below, the output is at 5 kb resolution throughout. This is a deliberate choice — it keeps a single interval definition across `frag-length-intervals`, `interval-end-motifs` and `delfi` — but it means the values are not numerically comparable to published DELFI scores without re-binning.
+>     The original DELFI methodology uses 100 kb bins merged to 5 Mb. This pipeline passes the same general-purpose interval file it gives `frag-length-intervals` and `interval-end-motifs`, so that one interval definition is shared across all three analyses. Combined with `--no-merge-bins` below, the output is at the `--interval` width throughout — `1mb` by default. The values are therefore not numerically comparable to published DELFI scores without re-binning, whatever width you choose.
+>
+>     Because the width is now a run option rather than a fixed reference file, a run closer to the publication's binning is possible (`--interval 100kb`), but note that the merge step is still disabled, so the 5 Mb merge is not reproduced.
+>
+> !!! warning "Windows with no coverage break GC correction"
+>
+>     DELFI drops bins that overlap the build's `gap` annotation, then GC-corrects what remains. If no surviving bin contains any fragment — a very sparse or narrowly-targeted BAM, or one whose only reads sit inside a centromere — every bin's GC and ratio are `NaN`, and the correction fails with `ValueError: arange: cannot compute length` rather than a message naming the cause. Larger `--interval` widths make this less likely, since each window pools fragments from more of the genome.
 
 ### 2.2 Options
 
@@ -100,7 +106,7 @@ The four positionals must be given in this order:
 
 | What | How |
 |------|-----|
-| Bin resolution | the `intervals` entry of `config/genome.json` for the selected build |
+| Bin resolution | `--interval`, which sets the width the bins are tiled at |
 | Blacklist / gap exclusion | the `blacklist` and `gap` entries — remove a key to drop the flag |
 | Threads / memory / walltime | the `delfi` entry of `config/cluster.json` |
 
@@ -117,7 +123,7 @@ Note that DELFI does not take `--fragment-minimum`/`--fragment-maximum` — it d
 
 ## 5. Requires
 
-`ref2bit`, `intervals` **and** `chrom_sizes` for the selected genome build. `blacklist` and `gap` are optional; each is passed only if present. Both bundled builds provide all five.
+`ref2bit`, `reference_fa` (which the bins are tiled from) **and** `chrom_sizes` for the selected genome build. `blacklist` and `gap` are optional; each is passed only if present. Both bundled builds provide all five.
 
 ## 6. Reference
 

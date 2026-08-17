@@ -6,7 +6,7 @@
 
 Where [`frag-length-bins`](frag-length-bins.md) gives one distribution for the whole genome, this gives summary statistics *per genomic window*: the mean, median, standard deviation, minimum and maximum fragment length in each interval. This turns fragment length from a single sample-level profile into a spatial signal, so regions where cfDNA is systematically shorter or longer than the genome average can be located.
 
-In this pipeline the intervals are the 5 kb windows tiling the genome for the selected build.
+In this pipeline the intervals are the fixed-size windows tiling the genome, built at the start of each run at the width given by [`--interval`](../usage/run.md) (default `1mb`).
 
 ## 2. As the pipeline runs it
 
@@ -30,7 +30,7 @@ finaletoolkit frag-length-intervals bams/{sample}.sorted.bam <intervals> \
 ---
   `interval_file`
 > **Windows to summarize over.**
-> *value:* the `intervals` file for the selected `--genome` build — 5 kb windows tiling the genome
+> *value:* `intervals/{genome}_{size}_intervals.bed`, tiled from the selected `--genome` build's reference FastA at the [`--interval`](../usage/run.md) width
 >
 > See [Reference files](../pipeline/references.md).
 
@@ -51,7 +51,7 @@ finaletoolkit frag-length-intervals bams/{sample}.sorted.bam <intervals> \
 > **How a fragment is assigned to an interval.**
 > *value:* `any`
 >
-> A fragment contributes to every 5 kb window it overlaps. A long fragment spanning a window boundary is therefore counted in both, which is the right behavior for characterizing the fragment population present at a locus.
+> A fragment contributes to every window it overlaps. A long fragment spanning a window boundary is therefore counted in both, which is the right behavior for characterizing the fragment population present at a locus. Double counting at boundaries matters more the narrower the `--interval` width is.
 
 ---
   `-w, --workers`
@@ -72,7 +72,7 @@ finaletoolkit frag-length-intervals bams/{sample}.sorted.bam <intervals> \
 |------|-----|
 | Whether this step runs | requires a non-zero `--split-interval` |
 | Fragment length window | `--fragment-minimum`, `--fragment-maximum` |
-| Which windows | the `intervals` entry of `config/genome.json` for the selected build |
+| Which windows | `--interval`, which sets the width the windows are tiled at |
 | Threads / memory / walltime | the `frag_length_intervals` entry of `config/cluster.json` |
 
 ```json
@@ -86,4 +86,4 @@ finaletoolkit frag-length-intervals bams/{sample}.sorted.bam <intervals> \
 
 ## 5. Requires
 
-A non-zero `--split-interval` (default `5000`), and the `intervals` file for the selected build. Both bundled builds provide it.
+A non-zero `--split-interval` (default `5000`), and `reference_fa` for the selected build, which the interval BED is tiled from. Both bundled builds provide it.

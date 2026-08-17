@@ -19,6 +19,7 @@ $ fragmentomics run [--help] [--overwrite-pipeline-template] \
       [--left-tss-flank LEFT_TSS_FLANK] \
       [--right-tss-flank RIGHT_TSS_FLANK] \
       [--split-interval SPLIT_INTERVAL] \
+      [--interval INTERVAL] \
       [--bin-size BIN_SIZE] \
       [--mapscore MAPSCORE] [--baseqscore BASEQSCORE] \
       -g {{hg38,hg19}} \
@@ -139,6 +140,28 @@ Each of the following arguments are optional, and do not need to be provided. Wh
 > Setting this to `0` also disables the [`frag-length-intervals`](../analyses/frag-length-intervals.md) analysis.
 > 
 > ***Example:*** `--split-interval 5000`
+
+---  
+  `-i INTERVAL`, `--interval INTERVAL`  
+> **Genomic window size.**  
+> *type: SI-prefixed base unit*  
+> *default: 1mb*
+>
+> Width of the fixed-size windows the reference genome is tiled into. These windows are the coordinate space that [`frag-length-intervals`](../analyses/frag-length-intervals.md), [`interval-end-motifs`](../analyses/interval-end-motifs.md) and [`delfi`](../analyses/delfi.md) summarize over: fragment-length statistics and end-motif frequencies are reported per window, and DELFI bins over them.
+>
+> The interval BED is **built on the fly** from the genome build's reference FastA at the start of each run, rather than read from a pre-made file. The window size is therefore a property of the run and not of the genome build — it is recorded in `config.json` and in the output filename, so two runs at different sizes never overwrite or silently reuse each other's windows.
+>
+> Accepts a base count with an optional SI prefix, in either case. `2MB`, `2mb`, `2m`, `2000kb` and `2000000` are all two megabases; a bare number is read as a plain base count. The size is normalized before it names the file, so every spelling of a size resolves to the same BED:
+>
+> ```text
+> --interval 2MB   ->  intervals/hg38_2mb_intervals.bed
+> --interval 5kb   ->  intervals/hg38_5kb_intervals.bed
+> --interval 500   ->  intervals/hg38_500bp_intervals.bed
+> ```
+>
+> Larger windows mean fewer of them, so each one accumulates more fragments and its per-window statistics are less noisy, at the cost of spatial resolution. The default of `1mb` is what DELFI's published analyses bin at.
+> 
+> ***Example:*** `--interval 2MB`
 
 ---  
   `--bin-size BIN_SIZE`  

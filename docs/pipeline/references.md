@@ -22,8 +22,13 @@ All bundled references are built against the **"clean" primary assembly** for th
 ---
   `reference_fa`
 > **Clean primary-assembly FastA.**
+> *used by:* [`fastq-alignment`](fastq-alignment.md), and the genomic interval BED (below)
 >
 > The FastA the alignment index, the sequence dictionary and the 2bit file were all derived from.
+>
+> It is also what the **genomic interval BED is tiled from at run time**. Fixed-width windows tiling the genome used to be built by hand and their path stored in `config/genome.json`; they are now generated per run from this FastA at the width given by [`--interval`](../usage/run.md) (default `1mb`) and written to `intervals/{genome}_{size}_intervals.bed` in the output directory. Those windows are the coordinate space [`frag-length-intervals`](../analyses/frag-length-intervals.md), [`interval-end-motifs`](../analyses/interval-end-motifs.md) and [`delfi`](../analyses/delfi.md) summarize over.
+>
+> Deriving them rather than bundling them makes the window size a property of the run instead of the build: it is chosen on the command line, recorded in `config.json`, and recoverable from the filename of any result produced with it. It also means this key, not a separate interval key, is what gates the window-based analyses.
 >
 > *hg38:* `hg38_clean.fa` &nbsp;·&nbsp; *hg19:* `hg19_clean.fa`
 
@@ -55,14 +60,6 @@ All bundled references are built against the **"clean" primary assembly** for th
 > *hg38:* `hg38.chrom.sizes` &nbsp;·&nbsp; *hg19:* `hg19.chrom.sizes`
 
 ---
-  `intervals`
-> **5 kb genomic interval BED.**
-> *used by:* [`frag-length-intervals`](../analyses/frag-length-intervals.md), [`interval-end-motifs`](../analyses/interval-end-motifs.md), [`delfi`](../analyses/delfi.md)
->
-> Fixed-width windows tiling the genome. Fragment-length statistics and end-motif frequencies are summarized per window, and DELFI bins over these before merging to its larger window size.
->
-> *hg38:* `hg38_5kb_intervals.bed` &nbsp;·&nbsp; *hg19:* `hg19_5kb_intervals.bed`
-
 ---
   `tss`
 > **Sorted transcription start site BED.**
@@ -101,7 +98,7 @@ All bundled references are built against the **"clean" primary assembly** for th
 
 ## 3. Optional files and graceful degradation
 
-`chrom_sizes`, `intervals`, `ref2bit`, `tss` and `tss_interval` gate which analyses run: the workflow only requests an output if the files that step needs are present for the selected build. `gap` and `blacklist` are softer — if either is absent, DELFI runs without the corresponding flag rather than being skipped. `dict` gates the [contig filter](contig-filter.md) alone. See [Pipeline overview §3](overview.md#3-which-steps-run) for the full dependency table.
+`chrom_sizes`, `reference_fa`, `ref2bit`, `tss` and `tss_interval` gate which analyses run: the workflow only requests an output if the files that step needs are present for the selected build. `gap` and `blacklist` are softer — if either is absent, DELFI runs without the corresponding flag rather than being skipped. `dict` gates the [contig filter](contig-filter.md) alone. See [Pipeline overview §3](overview.md#3-which-steps-run) for the full dependency table.
 
 Both bundled builds define every key, so a default run of either executes the whole workflow.
 
@@ -111,5 +108,5 @@ On the Biowulf cluster all of the above are already on a shared path and nothing
 
 To add a build, add a new key under `references` with the same file keys. Two constraints are worth stating explicitly:
 
-1. **Every file in a build must describe the same contig set.** Mixing a full-assembly 2bit with primary-only intervals, or a `chr`-prefixed TSS file with an unprefixed chrom.sizes, produces empty or misleading output rather than an error.
+1. **Every file in a build must describe the same contig set.** Mixing a full-assembly 2bit with a primary-only `reference_fa`, or a `chr`-prefixed TSS file with an unprefixed chrom.sizes, produces empty or misleading output rather than an error. Note that the interval BED inherits its contig set from `reference_fa`, so an assembly FastA carrying alt or decoy scaffolds will tile windows over them too.
 2. **Provide a `dict` if you will use BAM input.** Without one, staged BAMs go straight to analysis with no check that they were aligned to your build — a silent failure mode the contig filter exists to prevent.

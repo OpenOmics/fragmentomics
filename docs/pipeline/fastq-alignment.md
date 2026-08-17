@@ -21,7 +21,7 @@ Reads are aligned with [`bwa-mem2`](https://github.com/bwa-mem2/bwa-mem2) agains
 
 Both are indexes of the **"clean" primary-assembly FastA** for that build — the primary chromosomes only, without alt, decoy or patch scaffolds. This matters for two reasons:
 
-1. **Every downstream reference file is built against the same primary-only assembly.** The 2bit sequence, the 5 kb interval BED, the chrom.sizes file, the TSS BEDs, the gap track and the blacklist for a build all describe the same contig set. Aligning to the matching index means fragment coordinates, interval definitions and sequence lookups agree by construction.
+1. **Every downstream reference file is built against the same primary-only assembly.** The 2bit sequence, the chrom.sizes file, the TSS BEDs, the gap track and the blacklist for a build all describe the same contig set, and the genomic interval BED is tiled from that same FastA at run time. Aligning to the matching index means fragment coordinates, interval definitions and sequence lookups agree by construction.
 2. **It is the reason BAM input needs a [contig filter](contig-filter.md) but FastQ input does not.** Reads aligned here can only land on contigs the reference declares, so a FastQ run produces a BAM whose contig set already matches the reference exactly. User-supplied BAMs carry whatever contig set their original aligner used, which is usually a full assembly with several hundred extra scaffolds.
 
 Aligning to a build also selects the reference set used by the analysis steps. See [Reference files](references.md) for the full list of files each build provides.
