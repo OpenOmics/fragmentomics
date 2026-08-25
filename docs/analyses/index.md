@@ -65,4 +65,4 @@ Most of the analyses take the same handful of options, and the pipeline sets the
 
 ## 4. Other FinaleToolkit subcommands
 
-FinaleToolkit 0.11.0 also provides `delfi-gc-correct`, `breakpoint-motifs`, `interval-breakpoint-motifs`, `interval-mds`, `filter-file` and `gap-bed`. This pipeline does not currently run them, so they are not documented here — see the [FinaleToolkit documentation](https://finaletoolkit.readthedocs.io/) if you need them.
+FinaleToolkit 1.1.0 also provides `delfi-gc-correct`, `breakpoint-motifs`, `interval-breakpoint-motifs`, `interval-mds`, `filter-file` and `gap-bed`. This pipeline does not currently run them, so they are not documented here — see the [FinaleToolkit documentation](https://finaletoolkit.readthedocs.io/) if you need them.

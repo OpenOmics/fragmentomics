@@ -120,7 +120,7 @@ multiqc_dir                      = join(output_dir, 'multiqc')
 # Define outputs
 all_outputs = []
 
-# Bam starting point (convert any sam/cram)
+# Bam starting point
 # Fragment length bins
 all_outputs.extend(
     expand(join(bam_dir, "{sample}.sorted.bam"), sample=samples)

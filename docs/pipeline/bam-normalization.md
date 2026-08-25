@@ -7,7 +7,7 @@ When the pipeline is given ready-made alignments instead of FastQ files, it runs
 Normalization is a three-stage process:
 
 ```text
-<user-provided>.bam / .cram / .sam
+<user-provided>.bam
          │
          │  stage_bams                 ← this page, §2
          ▼
@@ -28,12 +28,11 @@ This page covers the first two stages. The third is documented in [Reference con
 
 `stage_bams` runs once per pipeline invocation and processes every input file. For each one it:
 
-1. **Determines the format from the file extension** — `.bam`, `.cram` or `.sam`, case-insensitively. A file whose extension is none of these is a hard error; the pipeline does not attempt to sniff the format from the file contents.
-2. **Normalizes the sample name.** The basename is stripped of its `.sorted` marker (if present) and of its `.bam`/`.cram`/`.sam` extension, then `.sorted.bam` is appended. So `Sample_A.cram`, `Sample_A.sam` and `Sample_A.sorted.bam` all normalize to the sample name `Sample_A`.
-3. **Filters reads on mapping and base quality** with `samtools view`, using the thresholds given on the command line. See [§2.2](#22-read-filtering).
-4. **Coordinate sorts and converts to BAM** with `samtools sort`. CRAM and SAM inputs are converted to BAM as part of this step — there is no separate conversion step. Already coordinate-sorted input still passes through the sort, which is cheap relative to re-sorting and guarantees the ordering rather than trusting the header's `SO:` tag. The filter above is piped straight into the sort, so no intermediate alignment file is written to disk.
-5. **Indexes the result**, producing a `.bai` alongside each BAM.
-6. **Refreshes the index timestamp** so the index is never older than the BAM it indexes. Without this, `samtools` and `pysam` emit "index is older than data file" warnings on some filesystems where the two writes land in the same timestamp granularity.
+1. **Determines the format from the file extension** — `.bam`, case-insensitively. A file whose extension is none of these is a hard error; the pipeline does not attempt to sniff the format from the file contents.
+2. **Filters reads on mapping and base quality** with `samtools view`, using the thresholds given on the command line. See [§2.2](#22-read-filtering).
+3. **Coordinate sorts and converts to BAM** with `samtools sort`. Already coordinate-sorted input still passes through the sort, which is cheap relative to re-sorting and guarantees the ordering rather than trusting the header's `SO:` tag. The filter above is piped straight into the sort, so no intermediate alignment file is written to disk.
+4. **Indexes the result**, producing a `.bai` alongside each BAM.
+5. **Refreshes the index timestamp** so the index is never older than the BAM it indexes. Without this, `samtools` and `pysam` emit "index is older than data file" warnings on some filesystems where the two writes land in the same timestamp granularity.
 
 The output lands in `staged_bams/`.
 
@@ -44,7 +43,7 @@ Because sample names are derived from basenames, two inputs from different direc
 ```text
 /path/one/Sample_A.bam   ─┐
                           ├─► both normalize to Sample_A
-/path/two/Sample_A.cram  ─┘
+/path/two/Sample_A.bam   ─┘
 ```
 
 `stage_bams` detects this before writing anything and fails with the list of colliding names. It does not silently pick one, and it does not disambiguate by adding a suffix — a collision means the two files would have produced results attributed to the same sample, and only the user knows which name each should have. Rename the inputs and re-run.

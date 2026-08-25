@@ -8,7 +8,7 @@ Every step runs inside a Singularity container defined in `config/containers.jso
 
 ## 2. Data flow
 
-The pipeline accepts **either** paired-end Illumina FastQ files **or** ready-made alignments (BAM/CRAM/SAM), never both in the same run. The input type is auto-detected by the frontend and recorded in `config.json` as `project.input_type`. Both input types converge on a single canonical per-sample file:
+The pipeline accepts **either** paired-end Illumina FastQ files **or** ready-made alignments in BAM format, never both in the same run. The input type is auto-detected by the frontend and recorded in `config.json` as `project.input_type`. Both input types converge on a single canonical per-sample file:
 
 ```text
 bams/{sample}.sorted.bam
@@ -34,7 +34,7 @@ Every analysis step reads that file and nothing else, which is what makes the an
 === "BAM input"
 
     ```text
-    <user-provided>.bam / .cram / .sam
+    <user-provided>.bam
              │
              │  stage_bams              (filter → coordinate sort + index)
              ▼
@@ -140,7 +140,7 @@ Both bundled builds define every reference key, so a default `hg38` or `hg19` ru
 └── logfiles/                   master job log and per-job logs (slurm mode)
 ```
 
-Sample names (`{sample}`) are derived from the input file basenames with the `.R1/.R2` mate suffix or the `.sorted`/`.bam`/`.cram`/`.sam` extensions stripped. Two inputs that reduce to the same sample name are rejected up front rather than silently clobbering one another.
+Sample names (`{sample}`) are derived from the input file basenames with the `.R1/.R2` mate suffix or the `.bam` extension stripped. Two inputs that reduce to the same sample name are rejected up front rather than silently clobbering one another.
 
 ## 5. Reproducibility
 

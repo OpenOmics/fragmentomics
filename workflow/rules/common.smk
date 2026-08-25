@@ -384,7 +384,7 @@ else:
         which is why this rule writes into the staging area rather than
         producing the analysis BAM directly.
         @Input:
-            User-provided BAM/CRAM/SAM alignments (gather).
+            User-provided BAM alignments (gather).
         @Output:
             Coordinate-sorted, indexed, filtered BAMs in the staging area.
         """
