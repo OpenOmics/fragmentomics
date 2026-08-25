@@ -60,7 +60,6 @@ All bundled references are built against the **"clean" primary assembly** for th
 > *hg38:* `hg38.chrom.sizes` &nbsp;·&nbsp; *hg19:* `hg19.chrom.sizes`
 
 ---
----
   `tss`
 > **Sorted transcription start site BED.**
 > *used by:* [`wps`](../analyses/wps.md), [`cleavage-profile`](../analyses/cleavage-profile.md)
