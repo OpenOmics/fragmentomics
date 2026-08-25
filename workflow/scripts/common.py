@@ -98,6 +98,30 @@ def str_bool(s):
         raise TypeError('Fatal: cannot type cast {} into a boolean'.format(val))
 
 
+def interval_label(bases):
+    """Renders a window width in bases as the short SI-prefixed label used to
+    name the generated interval BED. The frontend (--interval) validates and
+    normalizes the user's base unit into a plain base count, so this is the one
+    place a size becomes a filename and every equivalent spelling of a size
+    ('2MB', '2m', '2000kb', '2000000') resolves to the same name.
+
+    The largest prefix that divides the width evenly wins, so a width that is
+    not a whole number of the bigger unit falls back to a smaller one rather
+    than being rounded, i.e. 1500000 -> '1500kb', not '1mb' or '1.5mb'.
+    Example:
+      interval_label(1000000) returns '1mb'
+      interval_label(5000)    returns '5kb'
+      interval_label(500)     returns '500bp'
+    :param bases <int>: window width, in bases
+    :return <str>: SI-prefixed label, safe to embed in a filename
+    """
+    for multiplier, suffix in ((1000000000, 'gb'), (1000000, 'mb'), (1000, 'kb')):
+        if bases >= multiplier and bases % multiplier == 0:
+            return '{0}{1}'.format(bases // multiplier, suffix)
+
+    return '{0}bp'.format(bases)
+
+
 def joint_option(prefix, valueslist):
     """Joins a list while adding a common prefix.
     Example:

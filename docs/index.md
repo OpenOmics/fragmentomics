@@ -63,6 +63,35 @@ The **`./fragmentomics`** pipeline is composed several inter-related sub command
 
 As input, it accepts a set of paired-end Illumina FastQ or BAM files (FastQ and BAM cannot be mixed in a single run) and can be run locally on a compute instance or on-premise using a cluster. A user can define the method or mode of execution. The pipeline can submit jobs to a cluster using a job scheduler like SLURM (more coming soon!). A hybrid approach ensures the pipeline is accessible to all users. Before getting started, we highly recommend reading through the [usage](usage/run.md) section of each available sub command.
 
+## Documentation
+
+The documentation is organized into three parts:
+
+<section align="center" markdown="1" style="display: flex; flex-wrap: row wrap; justify-content: space-around;">
+
+!!! inline custom-grid-button ""
+
+    [**Commands**](usage/run.md)
+    The command-line interface: every option of every sub command.
+
+!!! inline custom-grid-button ""
+
+    [**Pipeline**](pipeline/overview.md)
+    What the workflow does: input handling, references, and QC.
+
+</section>
+
+<section align="center" markdown="1" style="display: flex; flex-wrap: row wrap; justify-content: space-around;">
+
+!!! inline custom-grid-button ""
+
+    [**Analyses**](analyses/index.md)
+    Each fragmentomics measurement, as the pipeline computes it.
+
+</section>
+
+New users should start with <code>fragmentomics <b>run</b></code>. If you are providing BAM files rather than FastQ files, also read [BAM normalization](pipeline/bam-normalization.md) and the [reference contig filter](pipeline/contig-filter.md), which describe how your alignments are checked against the selected genome build and subset to its contigs. If you are providing FastQ files, [FastQ alignment](pipeline/fastq-alignment.md) describes which reference the reads are aligned to and how the analysis BAM is filtered.
+
 For more information about issues or trouble-shooting a problem, please checkout our [FAQ](faq/questions.md) prior to [opening an issue on Github](https://github.com/OpenOmics/fragmentomics/issues).
 
 ## Contribute 

@@ -53,6 +53,7 @@ from os.path import join
 # Local imports
 from scripts.common import (
     allocated,
+    interval_label,
     provided,
     references,
     str_bool
@@ -79,14 +80,22 @@ samples                         = config["samples"]                            #
 genome                          = config['options']['genome']                  # Genome build
 genome_files                    = config["references"][genome]                 # Reference files for genome build
 ref2bit                         = 'ref2bit' in genome_files                    # Is there a 2bit fiel for genome build
-intervals                       = 'intervals' in genome_files                  # Is there a interval file for genome build
+# The genomic interval BED is no longer a bundled reference. It is tiled from
+# the build's reference FastA at runtime by make_intervals, at the width given
+# by --interval, so what gates the interval-based analyses is whether that FastA
+# exists for the build rather than whether a pre-made BED was shipped with it.
+intervals                       = 'reference_fa' in genome_files               # Can an interval file be built for genome build
 chrom_sizes                     = 'chrom_sizes' in genome_files                # Is there a Chromosome sizes file for genome build
 tss                             = 'tss' in genome_files                        # Is there a TSS file for genome build
 tss_interval                    = 'tss_interval' in genome_files               # Is there a Is there a TSS interval file for genome build
-split_interval                  = int(config['options']['split_interval'])   
+split_interval                  = int(config['options']['split_interval'])
 max_fragment_len                = int(config['options']['fragment_maximum'])
 min_fragment_len                = int(config['options']['fragment_minimum'])
 bin_size                        = int(config['options']['bin_size'])
+# Width of the windows the reference is tiled into, and the SI-prefixed label
+# derived from it that names the resulting BED (i.e. 1000000 -> '1mb').
+interval_width                  = int(config['options']['interval'])
+interval_name                   = interval_label(interval_width)
 
 # directories
 data_dir                         = config["project"]["datapath"]
@@ -94,6 +103,7 @@ all_input_files                  = config['options']['input']
 output_dir                       = config['options']['output']
 bin_dir                          = join(output_dir, 'workflow', 'scripts')
 bam_dir                          = join(output_dir, 'bams')
+bed_dir                          = join(output_dir, 'beds')
 coverage_dir                     = join(output_dir, 'coverage')
 fragment_length_dir              = join(output_dir, 'frag_length_bins')
 fragment_length_int_dir          = join(output_dir, 'frag_length_intervals')
@@ -104,11 +114,13 @@ delfi_dir                        = join(output_dir, 'delfi')
 wps_dir                          = join(output_dir, 'wps')
 adjust_wps_dir                   = join(output_dir, 'adjust_wps')
 cleavage_profile_dir             = join(output_dir, 'cleavage_profile')
+qc_dir                           = join(output_dir, 'qc')
+multiqc_dir                      = join(output_dir, 'multiqc')
 
 # Define outputs
 all_outputs = []
 
-# Bam starting point (convert any sam/cram)
+# Bam starting point
 # Fragment length bins
 all_outputs.extend(
     expand(join(bam_dir, "{sample}.sorted.bam"), sample=samples)
@@ -116,13 +128,47 @@ all_outputs.extend(
 
 all_outputs.extend(
     expand(
-        join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"), 
-        sample=samples, 
+        join(fragment_length_dir, "{sample}_frag_bin{bin_size}.tsv"),
+        sample=samples,
         bin_size=[bin_size]
     )
 )
 
-if split_interval:
+# BGZF-compressed BED of the analysis BAM's aligned intervals, plus its tabix
+# index. Unconditional, since bam_to_bed needs no reference file beyond the BAM
+# itself. The .tbi is written by the same job as the .bed.gz, so requesting it
+# pulls in nothing extra; it is listed so the index is visibly a deliverable
+# rather than a side effect.
+all_outputs.extend(
+    expand(join(bed_dir, "{sample}.bed.gz"), sample=samples)
+)
+all_outputs.extend(
+    expand(join(bed_dir, "{sample}.bed.gz.tbi"), sample=samples)
+)
+
+# Project-level QC. The merged coverage workbook is a gather over every
+# per-sample coverage bed, and the MultiQC report is a gather over the
+# per-sample samtools, FastQC and fastp reports plus a summary of the
+# finaletoolkit results, so requesting these two targets pulls in the coverage,
+# bam_stats, read QC and finaletoolkit_multiqc rules for all samples.
+all_outputs.append(join(coverage_dir, "coverage_summary.xlsx"))
+all_outputs.append(join(multiqc_dir, "multiqc_report.html"))
+
+# The bam input path validates each staged alignment against the selected
+# genome's sequence dictionary and subsets it to the shared contigs. The
+# per-sample report is requested explicitly so the record is produced even
+# when every downstream target is already up to date. Genomes without a
+# "dict" entry in config/genome.json have nothing to validate against, so the
+# rule is not defined and its report is not a target.
+if config["project"]["input_type"] != "illumina_fastq" and genome_files.get("dict"):
+    all_outputs.extend(
+        expand(join(qc_dir, "{sample}.contig_validation.txt"), sample=samples)
+    )
+
+# Summarizing fragment length per window needs the window definitions, so this
+# is gated on the interval BED being buildable as well as on --split-interval,
+# the same way the two analyses below are.
+if split_interval and intervals:
     all_outputs.extend(
         expand(
             join(fragment_length_int_dir, "{sample}_frag_interval.bed"),

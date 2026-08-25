@@ -113,6 +113,104 @@ def permissions(parser, path, *args, **kwargs):
     return os.path.abspath(path)
 
 
+def quality_threshold(parser, value, *args, **kwargs):
+    """Checks that a quality-score threshold is a non-negative integer. Used by
+    the --mapscore and --baseqscore options, which are both '>=' thresholds; a
+    negative threshold would silently keep everything rather than doing what
+    the user asked, so it is rejected instead.
+    @param parser <argparse.ArgumentParser() object>:
+        Argparse parser object
+    @param value <str>:
+        Value provided on the command line
+    @return threshold <int>:
+        The threshold as a non-negative integer
+    """
+    try:
+        threshold = int(value)
+    except ValueError:
+        parser.error(
+            "Quality threshold '{0}' is not an integer! Please provide a "
+            "non-negative whole number, i.e. a Phred score.".format(value)
+        )
+    if threshold < 0:
+        parser.error(
+            "Quality threshold '{0}' is negative! Please provide a "
+            "non-negative whole number, where 0 disables the filter.".format(value)
+        )
+
+    return threshold
+
+
+# SI prefixes accepted by interval_size(), mapped to their multiplier in bases.
+# Only whole-base multipliers make sense for a genomic coordinate, so the table
+# stops at gigabases. A bare number (no prefix) is read as a base count.
+SI_BASE_MULTIPLIERS = {
+    '': 1,
+    'b': 1,
+    'bp': 1,
+    'k': 1_000,
+    'kb': 1_000,
+    'm': 1_000_000,
+    'mb': 1_000_000,
+    'g': 1_000_000_000,
+    'gb': 1_000_000_000,
+}
+
+# Splits an SI-prefixed base unit into its magnitude and its unit, e.g.
+# '2MB' -> ('2', 'MB'), '500' -> ('500', ''). The magnitude is allowed to be
+# fractional so '1.5mb' can be given, as long as it lands on a whole base.
+SI_BASE_UNIT_RE = re.compile(r'^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]*)\s*$')
+
+
+def interval_size(parser, value, *args, **kwargs):
+    """Parses an SI-prefixed base unit into a whole number of bases. Used by the
+    --interval option, which sets the width of the genomic windows the pipeline
+    tiles the reference into. Accepts a bare base count or an SI prefix in either
+    case, i.e. 2MB, 2mb, 2m, 2000kb and 2000000 are all two megabases.
+    @param parser <argparse.ArgumentParser() object>:
+        Argparse parser object
+    @param value <str>:
+        Value provided on the command line
+    @return bases <int>:
+        The interval width as a positive whole number of bases
+    """
+    match = SI_BASE_UNIT_RE.match(str(value))
+    if not match:
+        parser.error(
+            "Interval size '{0}' is not a base unit! Please provide a number "
+            "with an optional SI prefix, i.e. 2MB for two megabases, 5kb for "
+            "five kilobases, or 500 for five hundred bases.".format(value)
+        )
+
+    magnitude, unit = match.group(1), match.group(2).lower()
+    if unit not in SI_BASE_MULTIPLIERS:
+        parser.error(
+            "Interval size '{0}' has an unrecognized unit '{1}'! Supported "
+            "units are: {2} (or no unit at all, for a plain base count).".format(
+                value, match.group(2),
+                ', '.join(u for u in SI_BASE_MULTIPLIERS if u)
+            )
+        )
+
+    bases = float(magnitude) * SI_BASE_MULTIPLIERS[unit]
+    if bases != int(bases):
+        # A window has to start and end on a base, so a fractional result is
+        # the user asking for something that cannot be tiled, i.e. 1.5bp.
+        parser.error(
+            "Interval size '{0}' does not resolve to a whole number of bases "
+            "({1})! Please provide a size that lands on a base boundary.".format(
+                value, bases
+            )
+        )
+    if int(bases) <= 0:
+        parser.error(
+            "Interval size '{0}' is not positive! Please provide a size "
+            "greater than zero.".format(value)
+        )
+
+    return int(bases)
+
+
 def standard_input(parser, path, *args, **kwargs):
     """Checks for standard input when provided or permissions using permissions().
     @param parser <argparse.ArgumentParser() object>:
