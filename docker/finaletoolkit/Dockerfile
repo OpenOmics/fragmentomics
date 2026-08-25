@@ -18,6 +18,6 @@ RUN apt-get install -y wget git vim samtools bedtools python3-pip golang-go
 RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN mkdir /opt2; cd /opt2; wget https://github.com/shenwei356/seqkit/releases/download/v2.10.1/seqkit_linux_arm64.tar.gz
 RUN cd /opt2; tar -xzvf seqkit_linux_arm64.tar.gz; mv seqkit /usr/bin; cd /; rm -rf /opt2
-# finaletoolkit for the fragmentomics rules; openpyxl so merge_coverage.py can
+# Pin finaletoolkit for the fragmentomics rules; openpyxl so merge_coverage.py can
 # write the coverage workbook; multiqc to aggregate the samtools QC reports.
-RUN pip install finaletoolkit openpyxl multiqc
+RUN pip install finaletoolkit==1.1.0 openpyxl multiqc
