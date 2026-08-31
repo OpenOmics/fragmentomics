@@ -1,0 +1,104 @@
+# =============================================================================
+# cfDNAanalyzer  (LiymLab/cfDNAanalyzer)
+# https://github.com/LiymLab/cfDNAanalyzer
+#
+# Base: official Bioconductor image (Ubuntu). It ships R 4.3.x, Bioconductor
+# 3.18 (matching the `BiocManager::install(version = "3.18")` pin in
+# install_R_packages.R), a full C/C++/Fortran build toolchain, every system
+# -dev library the R packages need, and a binary package repo so most R
+# packages install prebuilt instead of compiling from source.
+#
+# The Python/bioinformatics stack (Python 3.7.16, samtools, bedtools, ...) is
+# provided by a micromamba env created from environment.yml.
+# =============================================================================
+
+FROM bioconductor/bioconductor_docker:RELEASE_3_18
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# -----------------------------------------------------------------------------
+# Only the bits micromamba/clone need; R build deps already ship in the image.
+# -----------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ca-certificates curl bzip2 xz-utils unzip procps \
+ && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------------------------------
+# Install micromamba (single static binary, ~10 MB). No Miniconda, no user.
+# -----------------------------------------------------------------------------
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+ENV PATH=/opt/conda/bin:$PATH
+
+RUN mkdir -p /opt/conda \
+ && curl -fSL --retry 5 --retry-delay 3 --retry-all-errors \
+        -o /tmp/micromamba.tar.bz2 \
+        https://micro.mamba.pm/api/micromamba/linux-64/latest \
+ && tar -xvj -C /usr/local -f /tmp/micromamba.tar.bz2 bin/micromamba \
+ && rm -f /tmp/micromamba.tar.bz2 \
+ && micromamba shell init -s bash -r /opt/conda >/dev/null
+
+# -----------------------------------------------------------------------------
+# Clone the repo.
+# -----------------------------------------------------------------------------
+WORKDIR /opt
+RUN git clone --depth 1 https://github.com/LiymLab/cfDNAanalyzer.git \
+ && chmod -R a+rX /opt/cfDNAanalyzer
+
+WORKDIR /opt/cfDNAanalyzer
+
+# -----------------------------------------------------------------------------
+# Python/bioinformatics env from environment.yml (name: cfDNAanalyzer):
+# Python 3.7.16, samtools, bedtools, deeptools, etc. environment.yml does NOT
+# install R; R comes from the base image.
+#
+# RPY2_CFFI_MODE=ABI: environment.yml pip-builds rpy2==3.3.3 during env create
+# and there is no R inside this conda env, so ABI mode makes rpy2 bind to libR
+# at runtime (cffi) instead of requiring R headers at build time. R_HOME (set
+# below) points it at the image's R.
+# -----------------------------------------------------------------------------
+RUN RPY2_CFFI_MODE=ABI micromamba env create -y -f /opt/cfDNAanalyzer/environment.yml \
+ && micromamba clean --all --yes
+
+# -----------------------------------------------------------------------------
+# PATH: conda env bin first (python, samtools, ...); the image's R stays on the
+# default PATH (/usr/local/bin) since the conda env has no R of its own.
+# R_HOME lets rpy2 (ABI mode) locate libR at runtime.
+# -----------------------------------------------------------------------------
+ENV CONDA_PREFIX=/opt/conda/envs/cfDNAanalyzer
+ENV R_HOME=/usr/local/lib/R
+ENV PATH=/opt/conda/envs/cfDNAanalyzer/bin:$PATH
+
+# -----------------------------------------------------------------------------
+# Install the CRAN + Bioconductor R packages, using the image's R 4.3 / Bioc
+# 3.18. Runs with an explicitly clean PATH-resolved R (base image R), not the
+# conda env.
+# -----------------------------------------------------------------------------
+RUN Rscript /opt/cfDNAanalyzer/install_R_packages.R
+
+# -----------------------------------------------------------------------------
+# cfDNAAnalyzer execution setup
+# -----------------------------------------------------------------------------
+RUN chmod -R a+rX /opt/conda /opt/cfDNAanalyzer \
+ && chmod +x /opt/cfDNAanalyzer/cfDNAanalyzer.sh \
+ && ln -s /opt/cfDNAanalyzer/cfDNAanalyzer.sh /usr/bin/cfDNAAnalyzer \
+ && ln -s /opt/cfDNAanalyzer/cfDNAanalyzer.sh /usr/bin/CDA
+
+# -----------------------------------------------------------------------------
+# provanance
+# -----------------------------------------------------------------------------
+ADD Dockerfile /Dockerfile
+RUN { \
+      echo "=== SYSTEM ==="; uname -a; cat /etc/os-release; \
+      echo; echo "=== ENV ==="; env | sort; \
+      echo; echo "=== APT PACKAGES ==="; dpkg-query -W -f='${Package}\t${Version}\n' 2>/dev/null || echo "dpkg not available"; \
+      echo; echo "=== PYTHON ==="; python3 --version 2>&1; pip3 list --format=freeze 2>/dev/null || echo "pip not available"; \
+      echo; echo "=== R PACKAGES ==="; R --version 2>&1 | head -1; Rscript -e 'ip <- installed.packages()[,c("Package","Version")]; write.table(ip, quote=FALSE, row.names=FALSE, sep="\t")' 2>/dev/null || echo "R not available"; \
+    } > /session.txt 2>&1
+
+# -----------------------------------------------------------------------------
+# No ENTRYPOINT (Singularity ignores/overrides ENTRYPOINT behavior anyway).
+# Default CMD is a shell; users invoke cfDNAanalyzer.sh directly.
+# -----------------------------------------------------------------------------
+WORKDIR /work
+CMD ["bash"]
