@@ -19,9 +19,15 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # -----------------------------------------------------------------------------
 # Only the bits micromamba/clone need; R build deps already ship in the image.
+#
+# jq is not optional and is not a build tool: cfDNAanalyzer.sh checks for it
+# before doing anything else and exits if it is absent, so without it *every*
+# invocation fails regardless of which features were requested. It uses jq to
+# subset Feature_Processing/config_all_feature.json down to the selected
+# features, which is what tells the matrix builder what to assemble.
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates curl bzip2 xz-utils unzip procps \
+        git ca-certificates curl bzip2 xz-utils unzip procps jq \
  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -61,6 +67,23 @@ RUN RPY2_CFFI_MODE=ABI micromamba env create -y -f /opt/cfDNAanalyzer/environmen
  && micromamba clean --all --yes
 
 # -----------------------------------------------------------------------------
+# deeptools, which environment.yml omits: it pins `deeptoolsintervals` (a
+# dependency of deeptools) but not deeptools itself, so `bamCoverage` and
+# `multiBigwigSummary` are absent and the TSSC feature fails at its first step.
+#
+# 3.5.3 is the newest release that still declares support for Python 3.7, which
+# is what environment.yml pins the env to. --no-deps is deliberate: all ten of
+# its requirements (numpy, scipy, matplotlib, pysam, numpydoc, pyBigWig, py2bit,
+# plotly, deeptoolsintervals, importlib-metadata) are already satisfied by
+# environment.yml's exact-build pins, and letting pip resolve them would churn
+# the pinned env.
+# -----------------------------------------------------------------------------
+RUN /opt/conda/envs/cfDNAanalyzer/bin/pip install --no-cache-dir --no-deps \
+        deeptools==3.5.3 \
+ && /opt/conda/envs/cfDNAanalyzer/bin/bamCoverage --version \
+ && /opt/conda/envs/cfDNAanalyzer/bin/multiBigwigSummary --version
+
+# -----------------------------------------------------------------------------
 # PATH: conda env bin first (python, samtools, ...); the image's R stays on the
 # default PATH (/usr/local/bin) since the conda env has no R of its own.
 # R_HOME lets rpy2 (ABI mode) locate libR at runtime.
@@ -83,6 +106,48 @@ RUN chmod -R a+rX /opt/conda /opt/cfDNAanalyzer \
  && chmod +x /opt/cfDNAanalyzer/cfDNAanalyzer.sh \
  && ln -s /opt/cfDNAanalyzer/cfDNAanalyzer.sh /usr/bin/cfDNAAnalyzer \
  && ln -s /opt/cfDNAanalyzer/cfDNAanalyzer.sh /usr/bin/CDA
+
+# -----------------------------------------------------------------------------
+# Executable bits for the bundled helpers cfDNAanalyzer.sh runs as commands
+# rather than through an interpreter.
+#
+# Upstream commits every file in the repo mode 100644 -- not one carries the
+# executable bit -- so each of these has to be marked here or the feature that
+# calls it dies with "Permission denied". The `chmod -R a+rX` above does not
+# cover them: capital X only adds +x to directories and to files that are
+# already executable, which in this tree is none of them.
+#
+#   CNA   ichorCNA/hmmcopy_utils/bin/readCounter   bins the BAM into a wig
+#   NOF   DANPOS3/wigToBigWig                      nucleosome wig to bigWig
+#   NOF   DANPOS3/bigWigAverageOverBed             occupancy per region
+#   WPS   WPS/calculate_wps.sh                     per-region driver
+#   WPS   WPS/samtools                             bundled; needs -m/-M support
+#   WPS   WPS/FilterUniqueBAM.py                   piped, resolved by shebang
+#   WPS   WPS/extractReadStartsFromBAM2Wig.py      piped, resolved by shebang
+#   OCF   OCF/OCF.sh                               per-region driver
+#   OCF   OCF/bedtools                             bundled; called by OCF.sh
+#   PFE   Epic-seq/code/epic_wrapper.sh            invoked by runEPIC.R
+#
+# Each path is asserted before being chmod'ed, so an upstream change that moves
+# or renames one of them fails this build rather than failing at runtime inside
+# whichever feature needed it.
+# -----------------------------------------------------------------------------
+RUN set -eux; \
+    for tool in \
+        ichorCNA/hmmcopy_utils/bin/readCounter \
+        DANPOS3/wigToBigWig \
+        DANPOS3/bigWigAverageOverBed \
+        WPS/calculate_wps.sh \
+        WPS/samtools \
+        WPS/FilterUniqueBAM.py \
+        WPS/extractReadStartsFromBAM2Wig.py \
+        OCF/OCF.sh \
+        OCF/bedtools \
+        Epic-seq/code/epic_wrapper.sh \
+    ; do \
+        test -f "/opt/cfDNAanalyzer/${tool}"; \
+        chmod a+x "/opt/cfDNAanalyzer/${tool}"; \
+    done
 
 # -----------------------------------------------------------------------------
 # provanance
