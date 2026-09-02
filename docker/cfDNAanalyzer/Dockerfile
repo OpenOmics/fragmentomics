@@ -87,9 +87,19 @@ RUN /opt/conda/envs/cfDNAanalyzer/bin/pip install --no-cache-dir --no-deps \
 # PATH: conda env bin first (python, samtools, ...); the image's R stays on the
 # default PATH (/usr/local/bin) since the conda env has no R of its own.
 # R_HOME lets rpy2 (ABI mode) locate libR at runtime.
+#
+# LD_LIBRARY_PATH is needed too, and only by rpy2. $R_HOME/lib is on no default
+# loader path -- no /etc/ld.so.conf.d entry, no RUNPATH in the binary -- and
+# what normally covers that is R's launcher script, which sources
+# $R_HOME/etc/ldpaths. rpy2 embeds R rather than running the launcher, so R
+# starts and then cannot dyn.load its own base packages, all of which link
+# libR.so. DANPOS3 is the only rpy2 consumer here and the NOF feature its only
+# caller, so without this NOF is the one feature that cannot run. That directory
+# holds nothing but libR.so, so putting it on the search path shadows nothing.
 # -----------------------------------------------------------------------------
 ENV CONDA_PREFIX=/opt/conda/envs/cfDNAanalyzer
 ENV R_HOME=/usr/local/lib/R
+ENV LD_LIBRARY_PATH=/usr/local/lib/R/lib:$LD_LIBRARY_PATH
 ENV PATH=/opt/conda/envs/cfDNAanalyzer/bin:$PATH
 
 # -----------------------------------------------------------------------------
@@ -98,6 +108,18 @@ ENV PATH=/opt/conda/envs/cfDNAanalyzer/bin:$PATH
 # conda env.
 # -----------------------------------------------------------------------------
 RUN Rscript /opt/cfDNAanalyzer/install_R_packages.R
+
+# -----------------------------------------------------------------------------
+# Assert rpy2 can embed R, the operation the LD_LIBRARY_PATH above exists for.
+# It regresses easily and presents as an NOF bug hours into a run rather than as
+# an image bug, so it is caught here instead. danpos.py runs from its own
+# directory (its modules import each other by bare name) and with no arguments
+# prints a version banner, which is enough to prove the import chain resolves.
+# -----------------------------------------------------------------------------
+RUN /opt/conda/envs/cfDNAanalyzer/bin/python -c \
+      "import rpy2.robjects as ro; print('rpy2 embeds', ro.r('R.version.string')[0])" \
+ && cd /opt/cfDNAanalyzer/DANPOS3 \
+ && /opt/conda/envs/cfDNAanalyzer/bin/python danpos.py | grep -q 'danpos version'
 
 # -----------------------------------------------------------------------------
 # cfDNAAnalyzer execution setup
@@ -150,7 +172,7 @@ RUN set -eux; \
     done
 
 # -----------------------------------------------------------------------------
-# provanance
+# provenance
 # -----------------------------------------------------------------------------
 ADD Dockerfile /Dockerfile
 RUN { \
