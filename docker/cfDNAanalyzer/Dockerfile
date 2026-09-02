@@ -99,42 +99,18 @@ RUN /opt/conda/envs/cfDNAanalyzer/bin/pip install --no-cache-dir --no-deps \
 # -----------------------------------------------------------------------------
 ENV CONDA_PREFIX=/opt/conda/envs/cfDNAanalyzer
 ENV R_HOME=/usr/local/lib/R
-ENV LD_LIBRARY_PATH=/usr/local/lib/R/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib/R/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 ENV PATH=/opt/conda/envs/cfDNAanalyzer/bin:$PATH
 
 # -----------------------------------------------------------------------------
-# CRAN + Bioconductor packages against the image's R 4.3 / Bioc 3.18. Upstream's
-# install_R_packages.R inlined, so the mirror is ours: it sets a global CRAN
-# mirror to Tsinghua University's, 2.7 s to first byte from here against 0.05 s
-# for cloud.r-project.org, CRAN's own CDN (nearest edge Ashburn, VA).
+# CRAN + Bioconductor packages against the image's R 4.3 / Bioc 3.18.
 #
-# Only CRAN is overridden -- Bioconductor still resolves through the base
-# image's prebuilt BioCcontainers repo, so those nine install without compiling.
-# The pinned fourteen come from the CRAN source archive either way.
-#
-# install.packages only warns on failure, so Rscript exits 0 having produced an
-# image missing packages. The closing check makes that a build failure.
+# install_R_packages.R is ours, not the clone's: upstream's hardcodes a Tsinghua
+# University mirror, slow from us-east. It is copied over upstream's own copy so
+# nothing can run that one by accident. Its header covers what else differs.
 # -----------------------------------------------------------------------------
-RUN Rscript \
-      -e 'options(repos = c(CRAN = "https://cloud.r-project.org"))' \
-      -e 'for (p in c("remotes", "BiocManager"))' \
-      -e '    if (!requireNamespace(p, quietly = TRUE)) install.packages(p)' \
-      -e 'cran <- c(' \
-      -e '    DescTools = "0.99.40", zoo = "1.8.12", plyr = "1.8.9",' \
-      -e '    reshape2 = "1.4.4", data.table = "1.15.2", MASS = "7.3-60.0.1",' \
-      -e '    e1071 = "1.7-14", gtools = "3.9.5", matrixStats = "1.2.0",' \
-      -e '    optparse = "1.7.4", httr = "1.4.7", tidyverse = "2.0.0",' \
-      -e '    RCurl = "1.98-1.14", devtools = "2.4.5")' \
-      -e 'for (p in names(cran)) remotes::install_version(p, version = cran[[p]])' \
-      -e 'BiocManager::install(version = "3.18")' \
-      -e 'bioc <- c(' \
-      -e '    "HMMcopy", "GenomeInfoDb", "GenomicRanges", "Rsamtools",' \
-      -e '    "GenomicAlignments", "biovizBase", "rtracklayer",' \
-      -e '    "BSgenome.Hsapiens.UCSC.hg19", "BSgenome.Hsapiens.UCSC.hg38")' \
-      -e 'BiocManager::install(bioc)' \
-      -e 'remotes::install_github("broadinstitute/ichorCNA")' \
-      -e 'gap <- setdiff(c(names(cran), bioc, "ichorCNA"), rownames(installed.packages()))' \
-      -e 'if (length(gap)) stop("R packages missing: ", paste(gap, collapse = ", "))'
+COPY install_R_packages.R /opt/cfDNAanalyzer/install_R_packages.R
+RUN Rscript /opt/cfDNAanalyzer/install_R_packages.R
 
 # -----------------------------------------------------------------------------
 # Assert rpy2 can embed R, the operation the LD_LIBRARY_PATH above exists for.

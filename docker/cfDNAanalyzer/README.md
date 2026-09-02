@@ -26,11 +26,15 @@ Contents:
   `BiocManager::install(version = "3.18")` pin in upstream's
   `install_R_packages.R`. The base image also supplies the C/C++/Fortran
   toolchain and system `-dev` libraries those packages build against, plus a
-  prebuilt Bioconductor binary repo so those install without compiling. That
-  script is inlined into the Dockerfile rather than invoked, because it sets a
-  global CRAN mirror to Tsinghua University's — fine for its authors, slow from
-  here. The inline version uses `https://cloud.r-project.org`, CRAN's own CDN,
-  and leaves the Bioconductor repos alone; nothing else about it changes
+  prebuilt Bioconductor binary repo so those install without compiling. Upstream's
+  script is not the one that runs, though: it sets a global CRAN mirror to
+  Tsinghua University's, fine for its authors and slow from here, so
+  [`install_R_packages.R`](install_R_packages.R) beside this file is copied over
+  upstream's copy in the clone and run instead. It prefers
+  `https://cloud.r-project.org` (CRAN's own CDN), falls back to Duke's mirror and
+  then to the base image's Posit snapshot if the build network cannot reach one,
+  leaves the Bioconductor repos alone, and fails the build if any package is
+  missing afterwards. The package sets and pinned versions are unchanged
 - **Python 3.7.16** and the bioinformatics stack, in a micromamba env created
   from upstream's `environment.yml` (`samtools`, `bedtools`, `pysam`,
   `snakemake` 5.19.2, `pandas`, `scikit-learn`, ...). The env is first on `PATH`;
