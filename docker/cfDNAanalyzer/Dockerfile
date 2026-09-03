@@ -25,9 +25,25 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # invocation fails regardless of which features were requested. It uses jq to
 # subset Feature_Processing/config_all_feature.json down to the selected
 # features, which is what tells the matrix builder what to assemble.
+#
+# bc is likewise a runtime dependency of the driver rather than a build tool:
+# cfDNAanalyzer.sh shells out to it for the floating point arithmetic bash
+# cannot do itself, and without it the driver carries on past a
+# "bc: command not found" with an empty result substituted for the number it
+# asked for.
+#
+# libncurses5/libtinfo5 are for the samtools binary vendored in WPS/. It is an
+# old build linked against the ncurses 5 SONAMEs, and jammy ships only
+# ncurses 6 (libncurses6/libtinfo6), which do not satisfy it -- the two are not
+# ABI compatible and libncurses.so.6 is not a drop-in for libncurses.so.5. The
+# binary cannot simply be replaced by the env's own samtools either: WPS calls
+# it for the -m/-M insert size filters, so it is used deliberately rather than
+# incidentally. Without these the loader fails it, the BAM never reaches the
+# pipe, and WPS dies in pysam with "file does not contain alignment data".
 # -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates curl bzip2 xz-utils unzip procps jq \
+        git ca-certificates curl bzip2 xz-utils unzip procps jq bc \
+        libncurses5 libtinfo5 \
  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
@@ -153,6 +169,27 @@ RUN chmod -R a+rX /opt/conda /opt/cfDNAanalyzer \
 #   OCF   OCF/bedtools                             bundled; called by OCF.sh
 #   PFE   Epic-seq/code/epic_wrapper.sh            invoked by runEPIC.R
 #
+# The NP feature reaches its five through a layer of indirection: it does not
+# run them itself, it generates Griffin snakefiles whose shell directives are
+# `time ../../scripts/griffin_*.py ...`, i.e. the script as the command, so the
+# exec bit and the `#!/usr/bin/env python` shebang are what run it. Only the
+# five below are invoked that way; griffin_functions.py,
+# griffin_calc_GC_frequency.py and griffin_mappability_correction.py are
+# imported instead (the --griffin_scripts_dir the snakefiles pass is only ever
+# sys.path.insert'ed, and no Griffin script shells out to a sibling), so they
+# are left alone.
+#
+#   NP    Griffin/scripts/griffin_GC_counts.py     rule GC_counts
+#   NP    Griffin/scripts/griffin_GC_bias.py       rule GC_bias
+#   NP    Griffin/scripts/griffin_coverage.py      rule calc_coverage
+#   NP    Griffin/scripts/griffin_merge_sites.py   rule merge_sites
+#   NP    Griffin/scripts/griffin_plot.py          rule generate_plots
+#
+# GC_counts is the first of them to run, so without these NP fails at the very
+# start of its first nested workflow: the GC bias yaml is never written, the
+# nucleosome profiling snakefile that reads it aborts on the missing config,
+# and NP contributes nothing while the other ten features carry on.
+#
 # Each path is asserted before being chmod'ed, so an upstream change that moves
 # or renames one of them fails this build rather than failing at runtime inside
 # whichever feature needed it.
@@ -169,6 +206,11 @@ RUN set -eux; \
         OCF/OCF.sh \
         OCF/bedtools \
         Epic-seq/code/epic_wrapper.sh \
+        Griffin/scripts/griffin_GC_counts.py \
+        Griffin/scripts/griffin_GC_bias.py \
+        Griffin/scripts/griffin_coverage.py \
+        Griffin/scripts/griffin_merge_sites.py \
+        Griffin/scripts/griffin_plot.py \
     ; do \
         test -f "/opt/cfDNAanalyzer/${tool}"; \
         chmod a+x "/opt/cfDNAanalyzer/${tool}"; \
