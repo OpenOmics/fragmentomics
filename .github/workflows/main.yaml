@@ -25,6 +25,51 @@ jobs:
     - name: View the BAM input pipeline config file
       run: |
         echo "Generated config file for pipeline...." && cat $PWD/output/config.json
+    - name: Dryrun workflow with a custom genome config
+      run: |
+        # --genome also takes a JSON file describing reference files of the
+        # user's own. The frontend checks that each one exists and is readable,
+        # so stand-ins are created here; nothing reads their contents, the same
+        # way the hg38 run above never reads the paths its bundled build names.
+        mkdir -p $PWD/refs
+        for ref in custom.chrom.sizes custom.2bit custom.fa custom.dict \
+                   tss.custom_sorted.bed tss.custom_interval_sorted.bed; do
+          touch $PWD/refs/${ref}
+        done
+        cat > $PWD/refs/custom.json <<'JSON'
+        {
+            "chrom_sizes":  "/opt2/refs/custom.chrom.sizes",
+            "ref2bit":      "/opt2/refs/custom.2bit",
+            "reference_fa": "/opt2/refs/custom.fa",
+            "dict":         "/opt2/refs/custom.dict",
+            "tss":          "/opt2/refs/tss.custom_sorted.bed",
+            "tss_interval": "/opt2/refs/tss.custom_interval_sorted.bed",
+            "cda_genome":   "hg38"
+        }
+        JSON
+        docker run -v $PWD:/opt2 snakemake/snakemake:v5.24.2 \
+        bash -c '/opt2/fragmentomics run \
+        --genome /opt2/refs/custom.json \
+        --input /opt2/.tests/*.bam \
+        --output /opt2/custom_output \
+        --mode local \
+        --cda-features EM,CNA \
+        --dry-run'
+    - name: Check the custom genome was injected into the config file
+      run: |
+        # The build is named after its config file, and that name is what the
+        # workflow selects its references with and what labels the interval BED
+        # (intervals/custom_1mb_intervals.bed), so this is the whole contract.
+        python3 - <<'PY'
+        import json
+        config = json.load(open('custom_output/config.json'))
+        assert config['options']['genome'] == 'custom', config['options']['genome']
+        assert config['options']['genome_config'].endswith('refs/custom.json')
+        references = config['references']['custom']
+        assert references['cda_genome'] == 'hg38', references
+        assert references['ref2bit'] == '/opt2/refs/custom.2bit', references
+        print('custom genome resolved as:', json.dumps(references, indent=2))
+        PY
     - name: Lint Workflow
       continue-on-error: true
       run: |

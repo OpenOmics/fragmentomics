@@ -10,12 +10,15 @@ import sys
 from shutil import copytree, rmtree
 # Local imports
 from utils import (
+    CDA_GENOME_BUILDS,
     Colors,
     err,
     exists,
     fatal,
     git_commit_hash,
+    is_genome_config,
     join_jsons,
+    read_genome_config,
     which,
 )
 from . import version as __version__
@@ -693,11 +696,94 @@ def setup(sub_args, ifiles, repo_path, output_path, input_type, layout):
             value = str(value)
         config["options"][option] = value
 
+    # Resolve --genome into the reference file set the workflow reads. This has
+    # to run after the loop above, which records the raw option value, since a
+    # custom build's config file path is not what the workflow can look up.
+    config = add_genome_information(sub_args, config)
+
     # Add input data type and layout. Note: input_type is the RESOLVED
     # concrete type (illumina_fastq or bam), never the "auto" sentinel,
     # so the written config records exactly what was run for provenance.
     config["options"]["input_type"] = input_type
     config["options"]["layout"] = layout
+
+    return config
+
+
+def add_genome_information(sub_args, config):
+    """Resolves --genome into the build the workflow selects its references with.
+
+    The workflow reads its reference files from config['references'][genome],
+    where genome is config['options']['genome']. A bundled build is already in
+    config['references'] by way of config/genome.json, so resolving it is just a
+    matter of checking that it is really there; a custom build is read out of the
+    JSON file --genome named and injected alongside the bundled ones under the
+    name that file gives it.
+
+    Either way what the workflow sees is a build name, so nothing downstream has
+    to know which kind it was handed. The config file's path is recorded
+    separately, as options.genome_config, so a run made against custom
+    references can still be traced back to them.
+    @param sub_args:
+        Parsed arguments for the run sub-command
+    @param config <dict>:
+        Config dictionary to update, with config/genome.json already merged in
+    @return config <dict>:
+        Updated config dictionary
+    """
+    genome = sub_args.genome
+    references = config.setdefault("references", {})
+
+    if not is_genome_config(genome):
+        # Checked again here, and not only by the frontend's own option parsing,
+        # because the genome.json that matters is the copy in the output
+        # directory: an existing output directory keeps its copy unless
+        # --overwrite-pipeline-template is given, so the two can differ.
+        if genome not in references:
+            fatal(_fatal_message(
+                "Genome build '{0}' is not defined in the pipeline's "
+                "config/genome.json! Defined builds are: {1}.".format(
+                    genome, ', '.join(sorted(references)) or 'none'
+                )
+            ))
+        config["options"]["genome"] = genome
+        config["options"]["genome_config"] = ''
+        return config
+
+    try:
+        name, custom = read_genome_config(genome)
+    except ValueError as e:
+        fatal(_fatal_message(str(e)))
+
+    if name in references:
+        err(
+            "{0}Warning: genome config '{1}' is named '{2}', which is also a "
+            "build bundled in config/genome.json. The bundled build's reference "
+            "files are ignored for this run in favor of the ones this config "
+            "gives.{3}".format(Colors.yellow, genome, name, Colors.end)
+        )
+
+    # cfDNAanalyzer indexes its own bundled per-build references by the name
+    # given to its -g option, and refuses to start on any name but hg19 or
+    # hg38, so a custom build has to say which of the two it is coordinate
+    # compatible with before any of those features can run. The workflow drops
+    # them when it cannot, the same way it drops a feature whose reference files
+    # the build does not supply, so this is a warning rather than an error.
+    if sub_args.cda_features and custom.get('cda_genome') not in CDA_GENOME_BUILDS:
+        err(
+            "{0}Warning: genome config '{1}' does not set \"cda_genome\", so "
+            "the cfDNAanalyzer feature(s) {2} cannot be extracted and are "
+            "dropped from this run. cfDNAanalyzer only supports {3}; set "
+            "\"cda_genome\" to whichever of those your build's coordinates "
+            "match to enable them.{4}".format(
+                Colors.yellow, genome, ', '.join(sub_args.cda_features),
+                ' and '.join(CDA_GENOME_BUILDS), Colors.end
+            )
+        )
+
+    references[name] = custom
+    config["options"]["genome"] = name
+    config["options"]["genome_config"] = os.path.abspath(genome)
 
     return config
 

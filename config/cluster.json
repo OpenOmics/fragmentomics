@@ -3,7 +3,7 @@
         "partition": "norm",
         "threads": "4",
         "mem": "80000m",
-        "time": "72:00:00",
+        "time": "12:00:00",
         "gres": "lscratch:20"
     },
     "stage_bams": {
@@ -15,7 +15,7 @@
     "align_fastq": {
         "threads": 32,
         "mem": "200000m",
-        "time": "72:30:00",
+        "time": "12:00:00",
         "gres": "lscratch:200",
         "partition": "norm"
     },
@@ -42,7 +42,7 @@
     "coverage": {
         "threads": 1,
         "mem": "32000m",
-        "time": "72:02:00",
+        "time": "12:00:00",
         "gres": "lscratch:200",
         "partition": "norm"
     },
@@ -97,13 +97,13 @@
     "adjust_wps": {
         "threads": 24,
         "mem": "32G",
-        "time": "1-00:00:00",
+        "time": "12:00:00",
         "partition": "norm"
     },
     "cleavage_profile": {
         "threads": 24,
         "mem": "96G",
-        "time": "2-00:00:00",
+        "time": "12:00:00",
         "partition": "norm"
     },
     "agg_wps": {
@@ -148,7 +148,7 @@
     "merge_coverage_excel": {
         "threads": 1,
         "mem": "32000m",
-        "time": "72:02:00",
+        "time": "12:00:00",
         "gres": "lscratch:100",
         "partition": "norm"
     },
@@ -162,7 +162,27 @@
     "multiqc": {
         "threads": 1,
         "mem": "4000m",
-        "time": "24:30:00",
+        "time": "12:00:00",
+        "gres": "lscratch:100",
+        "partition": "norm"
+    },
+    "cda_regions_bed": {
+        "threads": 1,
+        "mem": "2G",
+        "time": "01:00:00",
+        "partition": "norm"
+    },
+    "cda_extract": {
+        "threads": 16,
+        "mem": "96G",
+        "time": "12:00:00",
+        "gres": "lscratch:400",
+        "partition": "norm"
+    },
+    "cda_merge_features": {
+        "threads": 1,
+        "mem": "64G",
+        "time": "12:00:00",
         "gres": "lscratch:100",
         "partition": "norm"
     }
