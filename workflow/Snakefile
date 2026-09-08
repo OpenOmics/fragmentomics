@@ -53,6 +53,8 @@ from os.path import join
 # Local imports
 from scripts.common import (
     allocated,
+    cda_analyses,
+    cda_matrices,
     interval_label,
     provided,
     references,
@@ -96,6 +98,11 @@ bin_size                        = int(config['options']['bin_size'])
 # derived from it that names the resulting BED (i.e. 1000000 -> '1mb').
 interval_width                  = int(config['options']['interval'])
 interval_name                   = interval_label(interval_width)
+# cfDNAanalyzer features to extract, as selected by --cda-features and filtered
+# down to the ones this genome build supplies the reference files for. Nothing
+# about cfDNAanalyzer is defined when the list is empty, which is the default,
+# so a run that did not ask for it is unaffected by its rules existing.
+cda_features                    = cda_analyses(config, genome_files)
 
 # directories
 data_dir                         = config["project"]["datapath"]
@@ -116,6 +123,7 @@ adjust_wps_dir                   = join(output_dir, 'adjust_wps')
 cleavage_profile_dir             = join(output_dir, 'cleavage_profile')
 qc_dir                           = join(output_dir, 'qc')
 multiqc_dir                      = join(output_dir, 'multiqc')
+cda_dir                          = join(output_dir, 'cfdnaanalyzer')
 
 # Define outputs
 all_outputs = []
@@ -194,6 +202,24 @@ if tss:
         all_outputs.extend(expand(join(adjust_wps_dir, "{sample}_wps_out_tss_adj_aggr.wig"), sample=samples))
         all_outputs.extend(expand(join(cleavage_profile_dir, "{sample}_cleavage_profile_aggr.wig"), sample=samples))
 
+# cfDNAanalyzer feature extraction. The project-level feature matrices are a
+# gather over every sample, so requesting them pulls in the per-sample
+# extraction for all of them. Each selected feature contributes one or more
+# matrices; asking for none (the default) leaves cfDNAanalyzer out of the run
+# entirely. The nucleosome profile feature additionally reports a coverage table
+# per transcription factor site list, and how many of those there are is a
+# property of the container image rather than something the workflow can
+# enumerate, so those are requested as a directory.
+if cda_features:
+    all_outputs.extend(
+        expand(
+            join(cda_dir, "features", "{matrix}.csv"),
+            matrix=cda_matrices(cda_features)
+        )
+    )
+    if 'NP' in cda_features:
+        all_outputs.append(join(cda_dir, "features", "NP_site_list"))
+
 
 # Final output files of the pipeline
 rule all:
@@ -204,4 +230,5 @@ rule all:
 # Import rules
 include: join("rules", "common.smk")
 # include: join("rules", "example.smk")
+include: join("rules", "cfdnaanalyzer.smk")
 include: join("rules", "hooks.smk")
