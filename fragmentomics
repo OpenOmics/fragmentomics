@@ -339,7 +339,7 @@ def parsed_arguments(name, description):
                                 reference files (chrom sizes, 2bit sequence, interval
                                 and TSS files, and any blacklist/gap files) the
                                 pipeline uses to characterize fragmentation features.
-                                Vaild options include: hg38 or hg19, which are the
+                                Valid options include: hg38 or hg19, which are the
                                 builds bundled in the pipeline's config/genome.json;
                                 or the path to a JSON file describing a reference set
                                 of your own, in the shape of one entry of that file:
