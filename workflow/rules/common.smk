@@ -58,14 +58,22 @@ min_mapping_quality             = int(config['options']['mapscore'])
 min_base_quality                = int(config['options']['baseqscore'])
 
 # genome linked artifacts
+#
+# Every one of these is read with .get() because a build is not obliged to define
+# all of them: the bundled builds do, but --genome also takes a config file
+# describing references of the user's own, and such a build may only have some of
+# them. Which analyses a run performs is decided by which of these keys the
+# selected build supplies (see the gating at the bottom of this file and in the
+# Snakefile), so a key that is absent leaves the rules that read it defined but
+# never requested, rather than failing the workflow as it is being built.
 genome_files                    = config["references"][genome]
-chrom_sizes                     = genome_files["chrom_sizes"]
-ref2bit                         = genome_files["ref2bit"]
+chrom_sizes                     = genome_files.get("chrom_sizes", None)
+ref2bit                         = genome_files.get("ref2bit", None)
 # Note: the genomic interval BED is not a bundled reference. It is generated per
 # run by make_intervals, so its path is derived from the output directory below
 # rather than read from config/genome.json.
-tss                             = genome_files['tss']
-tss_interval                    = genome_files['tss_interval']
+tss                             = genome_files.get('tss', None)
+tss_interval                    = genome_files.get('tss_interval', None)
 gap                             = genome_files.get("gap", None)
 blacklist                       = genome_files.get("blacklist", None)
 # Picard-style sequence dictionary, used by the bam input path to check that
