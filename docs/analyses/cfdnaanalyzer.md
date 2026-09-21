@@ -43,12 +43,16 @@ DAG entirely: no rules are defined and its container is never pulled.
 
 ## 2. As the pipeline runs it
 
-Three rules, a scatter and a gather:
+One scatter and a bounded-memory split gather:
 
 ```text
-cda_regions_bed     once per run, only if a region-specific feature was selected
-cda_extract         once per sample
-cda_merge_features  once per run, gathers every sample
+cda_regions_bed          once per run, only for region-specific features
+cda_extract              once per sample
+cda_merge_matrix         once per ordinary matrix
+cda_merge_np_site_lists  once per run when NP was selected
+cda_emr_schema           once when regional EMR was selected
+cda_emr_row              once per sample when regional EMR was selected
+cda_emr_assemble         once when regional EMR was selected
 ```
 
 ### 2.1 `cda_regions_bed`
@@ -85,7 +89,7 @@ CDA -I <one-line BAM list> -o <scratch> \
 
 **Why one sample per job.** cfDNAanalyzer walks its `-I` list serially in a
 single process, so a single all-samples invocation gets no parallelism at all.
-The rule hands it a one-line BAM list instead, and `cda_merge_features` puts the
+The rule hands it a one-line BAM list instead, and the split gather puts the
 matrices back together. That is safe because nothing in extraction is
 cross-sample: each matrix's columns are derived from an input shared by every
 sample (the region BED, the bundled site lists, the 256 end motifs, the fixed
@@ -160,14 +164,22 @@ site-list tables are one row per sample.
     still holds, because the analysis BAM was already filtered to it before
     cfDNAanalyzer saw it. A `--mapscore` below 30 does not — 30 wins.
 
-### 2.3 `cda_merge_features`
+### 2.3 Matrix gather
 
-Runs [`workflow/scripts/merge_cda_features.py`](../../workflow/scripts/merge_cda_features.py),
-a row concatenation aligned on column name. Where two samples disagree on
-columns the union is kept and the mismatch reported, rather than either side
-being silently trimmed. A sample that cfDNAanalyzer dropped for failing a
-feature's quality control has a header-only CSV and is simply absent from the
-merged rows, exactly as it would have been.
+Ordinary matrices are gathered one matrix per job by
+[`workflow/scripts/merge_cda_features.py`](../../workflow/scripts/merge_cda_features.py).
+Equal headers take a byte-streaming fast path. Where samples disagree on
+columns, the union is kept and each sample is aligned separately, so memory use
+does not grow with the number of samples held at once. NP site-list tables use
+the same bounded-memory implementation.
+
+`EMR_region_motif_frequency` can contain millions of columns and is split
+further. `cda_emr_schema` streams its sorted headers into one union using
+[`cfdnaanalyzer_dense_csv_merge.cpp`](../../workflow/scripts/cfdnaanalyzer_dense_csv_merge.cpp),
+`cda_emr_row` aligns each sample independently, and `cda_emr_assemble` appends
+the completed rows. The intermediate schema and rows are temporary Snakemake
+outputs. A sample that cfDNAanalyzer dropped for a feature has no data row and
+is absent from the final matrix, exactly as in an unsplit cfDNAanalyzer run.
 
 ## 3. Features
 
@@ -243,7 +255,7 @@ targets: how many there are is a property of the container image.
 | Regions the region-specific features score | `--cda-regions` |
 | `CNA` bin size | `--cda-cna-bin-size` — 10, 50, 500 or 1000 kb only |
 | `TSSC` window | `--left-tss-flank` and `--right-tss-flank`, shared with `cleavage-profile` |
-| Threads / memory / walltime | the `cda_extract`, `cda_merge_features` and `cda_regions_bed` entries of `config/cluster.json` |
+| Threads / memory / walltime | the `cda_extract`, `cda_merge_*`, `cda_emr_*`, and `cda_regions_bed` entries of `config/cluster.json` |
 
 ```json
 "cda_extract": {

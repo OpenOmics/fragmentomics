@@ -90,6 +90,20 @@ cda_matrix_names                 = cda_matrices(cda_features)
 cda_dir                          = join(output_dir, 'cfdnaanalyzer')
 cda_sample_dir                   = join(cda_dir, 'samples')
 cda_features_dir                 = join(cda_dir, 'features')
+cda_merge_dir                    = join(cda_dir, '.merge')
+
+# Regional EMR is qualitatively wider than every other matrix (15.6 million
+# columns in the 72-sample production run).  It gets a streaming, split gather;
+# the remaining matrices are safe to align one at a time in Python.
+cda_regional_emr                 = 'EMR_region_motif_frequency'
+cda_ordinary_matrix_names        = [
+                                     matrix for matrix in cda_matrix_names
+                                     if matrix != cda_regional_emr
+                                   ]
+cda_emr_merge_dir                = join(cda_merge_dir, cda_regional_emr)
+cda_emr_schema                   = join(cda_emr_merge_dir, 'schema.txt')
+cda_emr_header                   = join(cda_emr_merge_dir, 'header.csv')
+cda_emr_rows_dir                 = join(cda_emr_merge_dir, 'rows')
 
 # The BED3 the region-specific features are handed, normalized from
 # cda_region_source by cda_regions_bed below.
@@ -156,7 +170,7 @@ if cda_features:
         Extract the selected cfDNAanalyzer features for one sample. This is the
         scatter half of the analysis: cfDNAanalyzer is invoked with a one-line
         BAM list so each sample is a separate job, and its per-sample feature
-        matrices are collected by cda_merge_features afterwards.
+        matrices are collected by the split gather rules afterwards.
 
         Three things about how cfDNAanalyzer is packaged shape the shell below,
         and none of them are optional:
@@ -404,7 +418,7 @@ if cda_features:
             # likely reason, not a proven one.
             #
             # An absent matrix is published as an empty file: the output
-            # Snakemake was promised exists, and merge_cda_features.py reads it
+            # Snakemake was promised exists, and the gather reads it
             # as a sample with no rows, which is what it is. The sample is then
             # simply missing from the merged matrix, as it would have been had
             # cfDNAanalyzer scored every sample at once.
@@ -444,73 +458,274 @@ if cda_features:
             """)
 
 
-    rule cda_merge_features:
-        """
-        Merge the per-sample cfDNAanalyzer feature matrices into one matrix per
-        feature for the whole project. This is the gather half of the analysis,
-        so it waits on every sample.
+    if cda_ordinary_matrix_names:
+        rule cda_merge_matrix:
+            """
+            Merge one ordinary cfDNAanalyzer matrix across all samples. Equal
+            schemas are byte-streamed; unequal schemas are aligned by name one
+            sample at a time. One matrix per job bounds memory and lets the
+            independent gathers run concurrently.
+            @Input:
+                One per-sample CSV for this matrix
+            @Output:
+                One project-level feature matrix CSV
+            """
+            input:
+                csvs                    = lambda wildcards: [
+                                            join(
+                                              cda_sample_dir,
+                                              sample,
+                                              wildcards.matrix + '.csv'
+                                            )
+                                            for sample in sample_stems
+                                          ],
+            output:
+                csv                     = join(cda_features_dir, "{matrix}.csv"),
+            wildcard_constraints:
+                matrix                  = '|'.join(cda_ordinary_matrix_names),
+            container:
+                config['images']['cfdnaanalyzer']
+            resources:
+                partition = allocated("partition", "cda_merge_matrix", cluster),
+                mem       = allocated("mem",  "cda_merge_matrix", cluster),
+                time      = allocated("time", "cda_merge_matrix", cluster),
+                gres      = allocated("gres", "cda_merge_matrix", cluster),
+            threads:
+                int(allocated("threads", "cda_merge_matrix", cluster))
+            params:
+                rname                   = "cda_merge_matrix",
+                tmpdir                  = tmpdir,
+                python_script           = join(bin_dir, 'merge_cda_features.py'),
+                sources                 = lambda wildcards: ' '.join(
+                                            join(
+                                              cda_sample_dir,
+                                              sample,
+                                              wildcards.matrix + '.csv'
+                                            )
+                                            for sample in sample_stems
+                                          ),
+                samples                 = ' '.join(sample_stems),
+            shell:
+                dedent("""
+                if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+                tmp=$(mktemp -d -p \"{params.tmpdir}\")
+                trap 'rm -rf \"${{tmp}}\"' EXIT
 
-        Merging is a row concatenation aligned on column name, which is what
-        makes scattering extraction safe: each per-sample CSV holds that
-        sample's row of a matrix whose columns are derived from inputs shared
-        by every sample, so the columns agree and the result is the matrix a
-        single all-samples cfDNAanalyzer run would have written. Where a sample
-        is missing from a matrix, because cfDNAanalyzer dropped it for failing
-        that feature's quality control, it is simply absent from the merged
-        rows, exactly as it would have been.
-        @Input:
-            Per-sample feature matrix CSVs from cda_extract (gather), plus the
-            per-sample nucleosome profile site list tables when NP was selected
-        @Output:
-            One project-level CSV per feature matrix, plus the merged
-            per-site-list nucleosome profile tables when NP was selected
-        """
-        input:
-            csvs                    = expand(
-                                        join(cda_sample_dir, "{sample}", "{matrix}.csv"),
-                                        sample=sample_stems,
-                                        matrix=cda_matrix_names
-                                      ),
-            sites                   = provided(
-                                        expand(
+                python {params.python_script} matrix \\
+                    --name {wildcards.matrix} \\
+                    --sources {params.sources} \\
+                    --samples {params.samples} \\
+                    --scratch \"${{tmp}}\" \\
+                    --output {output.csv}
+                """)
+
+
+    if 'NP' in cda_features:
+        rule cda_merge_np_site_lists:
+            """Merge the per-site-list nucleosome profile tables."""
+            input:
+                sites                   = expand(
                                             join(cda_sample_dir, "{sample}", "NP_site_list"),
                                             sample=sample_stems
-                                        ),
-                                        'NP' in cda_features
-                                      ),
-        output:
-            csvs                    = expand(
-                                        join(cda_features_dir, "{matrix}.csv"),
-                                        matrix=cda_matrix_names
-                                      ),
-            sites                   = provided(
-                                        [directory(cda_np_site_lists)],
-                                        'NP' in cda_features
-                                      ),
-        container:
-            config['images']['cfdnaanalyzer']
-        resources:
-            partition = allocated("partition", "cda_merge_features", cluster),
-            mem       = allocated("mem",  "cda_merge_features", cluster),
-            time      = allocated("time", "cda_merge_features", cluster),
-            gres      = allocated("gres", "cda_merge_features", cluster),
-        threads:
-            int(allocated("threads", "cda_merge_features", cluster))
-        params:
-            rname                   = "cda_merge_features",
-            python_script           = join(bin_dir, 'merge_cda_features.py'),
-            sample_dirs             = ' '.join(
-                                        join(cda_sample_dir, sample)
-                                        for sample in sample_stems
-                                      ),
-            matrices                = ' '.join(cda_matrix_names),
-            output_dir              = cda_features_dir,
-            site_lists_option       = "--site-lists NP_site_list" if 'NP' in cda_features else "",
-        shell:
-            dedent("""
-            python {params.python_script} \\
-                --sample-dirs {params.sample_dirs} \\
-                --matrices {params.matrices} \\
-                {params.site_lists_option} \\
-                --output {params.output_dir}
-            """)
+                                          ),
+            output:
+                sites                   = directory(cda_np_site_lists),
+            container:
+                config['images']['cfdnaanalyzer']
+            resources:
+                partition = allocated("partition", "cda_merge_np_site_lists", cluster),
+                mem       = allocated("mem",  "cda_merge_np_site_lists", cluster),
+                time      = allocated("time", "cda_merge_np_site_lists", cluster),
+                gres      = allocated("gres", "cda_merge_np_site_lists", cluster),
+            threads:
+                int(allocated("threads", "cda_merge_np_site_lists", cluster))
+            params:
+                rname                   = "cda_merge_np_site_lists",
+                tmpdir                  = tmpdir,
+                python_script           = join(bin_dir, 'merge_cda_features.py'),
+                sample_dirs             = ' '.join(
+                                            join(cda_sample_dir, sample)
+                                            for sample in sample_stems
+                                          ),
+                samples                 = ' '.join(sample_stems),
+                output_dir              = cda_features_dir,
+            shell:
+                dedent("""
+                if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+                tmp=$(mktemp -d -p \"{params.tmpdir}\")
+                trap 'rm -rf \"${{tmp}}\"' EXIT
+
+                python {params.python_script} site-lists \\
+                    --sample-dirs {params.sample_dirs} \\
+                    --samples {params.samples} \\
+                    --scratch \"${{tmp}}\" \\
+                    --output {params.output_dir}
+                """)
+
+
+    if cda_regional_emr in cda_matrix_names:
+        rule cda_emr_schema:
+            """
+            Stream the sorted regional-EMR headers into their union schema.
+            Only one feature name per sample is retained in memory.
+            """
+            input:
+                csvs                    = expand(
+                                            join(
+                                              cda_sample_dir,
+                                              "{sample}",
+                                              cda_regional_emr + '.csv'
+                                            ),
+                                            sample=sample_stems
+                                          ),
+            output:
+                schema                  = temp(cda_emr_schema),
+                header                  = temp(cda_emr_header),
+            container:
+                config['images']['cfdnaanalyzer']
+            resources:
+                partition = allocated("partition", "cda_emr_schema", cluster),
+                mem       = allocated("mem",  "cda_emr_schema", cluster),
+                time      = allocated("time", "cda_emr_schema", cluster),
+                gres      = allocated("gres", "cda_emr_schema", cluster),
+            threads:
+                int(allocated("threads", "cda_emr_schema", cluster))
+            params:
+                rname                   = "cda_emr_schema",
+                tmpdir                  = tmpdir,
+                python_script           = join(bin_dir, 'merge_cda_features.py'),
+                helper_source           = join(bin_dir, 'cfdnaanalyzer_dense_csv_merge.cpp'),
+                sources                 = ' '.join(
+                                            join(
+                                              cda_sample_dir,
+                                              sample,
+                                              cda_regional_emr + '.csv'
+                                            )
+                                            for sample in sample_stems
+                                          ),
+                samples                 = ' '.join(sample_stems),
+            shell:
+                dedent("""
+                if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+                tmp=$(mktemp -d -p \"{params.tmpdir}\")
+                trap 'rm -rf \"${{tmp}}\"' EXIT
+
+                g++ -O3 -std=c++17 -Wall -Wextra -pedantic \\
+                    {params.helper_source} -o \"${{tmp}}/cda_dense_merge\"
+                python {params.python_script} source-list \\
+                    --sources {params.sources} \\
+                    --samples {params.samples} \\
+                    --output \"${{tmp}}/sources.tsv\"
+
+                if [ -s \"${{tmp}}/sources.tsv\" ]; then
+                    \"${{tmp}}/cda_dense_merge\" schema \\
+                        --list \"${{tmp}}/sources.tsv\" \\
+                        --schema \"${{tmp}}/schema.txt\" \\
+                        --header \"${{tmp}}/header.csv\"
+                else
+                    : > \"${{tmp}}/schema.txt\"
+                    printf 'sample,label\\n' > \"${{tmp}}/header.csv\"
+                fi
+
+                mkdir -p \"$(dirname {output.schema})\"
+                mv \"${{tmp}}/schema.txt\" {output.schema}
+                mv \"${{tmp}}/header.csv\" {output.header}
+                """)
+
+
+        rule cda_emr_row:
+            """
+            Align one regional-EMR sample row to the union schema. Splitting by
+            sample makes the 15-million-column transform parallel and bounded.
+            """
+            input:
+                csv                     = join(
+                                            cda_sample_dir,
+                                            "{sample}",
+                                            cda_regional_emr + '.csv'
+                                          ),
+                schema                  = cda_emr_schema,
+            output:
+                row                     = temp(join(cda_emr_rows_dir, "{sample}.csv")),
+            container:
+                config['images']['cfdnaanalyzer']
+            resources:
+                partition = allocated("partition", "cda_emr_row", cluster),
+                mem       = allocated("mem",  "cda_emr_row", cluster),
+                time      = allocated("time", "cda_emr_row", cluster),
+                gres      = allocated("gres", "cda_emr_row", cluster),
+            threads:
+                int(allocated("threads", "cda_emr_row", cluster))
+            params:
+                rname                   = "cda_emr_row",
+                tmpdir                  = tmpdir,
+                helper_source           = join(bin_dir, 'cfdnaanalyzer_dense_csv_merge.cpp'),
+            shell:
+                dedent("""
+                if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+                tmp=$(mktemp -d -p \"{params.tmpdir}\")
+                trap 'rm -rf \"${{tmp}}\"' EXIT
+                mkdir -p \"$(dirname {output.row})\"
+
+                if [ ! -s {input.csv} ]; then
+                    : > {output.row}
+                else
+                    g++ -O3 -std=c++17 -Wall -Wextra -pedantic \\
+                        {params.helper_source} -o \"${{tmp}}/cda_dense_merge\"
+                    \"${{tmp}}/cda_dense_merge\" row \\
+                        --source {input.csv} \\
+                        --sample {wildcards.sample} \\
+                        --schema {input.schema} \\
+                        --output {output.row}
+                fi
+                """)
+
+
+        rule cda_emr_assemble:
+            """Assemble the regional-EMR header and aligned sample rows."""
+            input:
+                header                  = cda_emr_header,
+                rows                    = expand(
+                                            join(cda_emr_rows_dir, "{sample}.csv"),
+                                            sample=sample_stems
+                                          ),
+            output:
+                csv                     = join(
+                                            cda_features_dir,
+                                            cda_regional_emr + '.csv'
+                                          ),
+            container:
+                config['images']['cfdnaanalyzer']
+            resources:
+                partition = allocated("partition", "cda_emr_assemble", cluster),
+                mem       = allocated("mem",  "cda_emr_assemble", cluster),
+                time      = allocated("time", "cda_emr_assemble", cluster),
+                gres      = allocated("gres", "cda_emr_assemble", cluster),
+            threads:
+                int(allocated("threads", "cda_emr_assemble", cluster))
+            params:
+                rname                   = "cda_emr_assemble",
+                tmpdir                  = tmpdir,
+                python_script           = join(bin_dir, 'merge_cda_features.py'),
+                rows                    = ' '.join(
+                                            join(cda_emr_rows_dir, sample + '.csv')
+                                            for sample in sample_stems
+                                          ),
+            shell:
+                dedent("""
+                if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
+                tmp=$(mktemp -d -p \"{params.tmpdir}\")
+                trap 'rm -rf \"${{tmp}}\"' EXIT
+
+                python {params.python_script} assemble \\
+                    --name {cda_regional_emr} \\
+                    --header {input.header} \\
+                    --rows {params.rows} \\
+                    --scratch \"${{tmp}}\" \\
+                    --output {output.csv}
+                """)
+
+
+    # The gather is intentionally split into the independent rules above.
+    # The previous single-job implementation loaded all matrices into pandas at
+    # once and could not complete the production regional-EMR join.

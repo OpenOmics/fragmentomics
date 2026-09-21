@@ -179,11 +179,39 @@
         "gres": "lscratch:400",
         "partition": "norm"
     },
-    "cda_merge_features": {
+    "cda_merge_matrix": {
         "threads": 1,
-        "mem": "64G",
-        "time": "12:00:00",
-        "gres": "lscratch:100",
+        "mem": "4G",
+        "time": "02:00:00",
+        "gres": "lscratch:5",
+        "partition": "norm"
+    },
+    "cda_merge_np_site_lists": {
+        "threads": 1,
+        "mem": "2G",
+        "time": "01:00:00",
+        "gres": "lscratch:5",
+        "partition": "norm"
+    },
+    "cda_emr_schema": {
+        "threads": 1,
+        "mem": "2G",
+        "time": "01:00:00",
+        "gres": "lscratch:10",
+        "partition": "norm"
+    },
+    "cda_emr_row": {
+        "threads": 1,
+        "mem": "2G",
+        "time": "01:00:00",
+        "gres": "lscratch:5",
+        "partition": "norm"
+    },
+    "cda_emr_assemble": {
+        "threads": 1,
+        "mem": "2G",
+        "time": "01:00:00",
+        "gres": "lscratch:20",
         "partition": "norm"
     }
 }

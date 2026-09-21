@@ -2,7 +2,7 @@
 
 Feature extraction image for the optional [cfDNAanalyzer](https://github.com/LiymLab/cfDNAanalyzer)
 analysis. It carries the whole upstream toolkit, and the `cda_regions_bed`,
-`cda_extract` and `cda_merge_features` rules in
+`cda_extract` and split matrix-gather rules in
 [`workflow/rules/cfdnaanalyzer.smk`](../../workflow/rules/cfdnaanalyzer.smk) all
 run inside it.
 
