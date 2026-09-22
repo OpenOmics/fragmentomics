@@ -1,0 +1,21 @@
+# Documentation build requirements.
+#
+# Direct dependencies only; everything else is resolved transitively. Each
+# entry below is required by mkdocs.yml, so nothing here can be dropped
+# without also editing that file.
+
+# Static site generator. Also provides the built-in "search" plugin and the
+# markdown.extensions.* extensions used in mkdocs.yml.
+mkdocs
+
+# theme: name: material
+mkdocs-material
+
+# plugins: minify
+mkdocs-minify-plugin
+
+# plugins: git-revision-date
+mkdocs-git-revision-date-plugin
+
+# markdown_extensions: pymdownx.*
+pymdown-extensions
