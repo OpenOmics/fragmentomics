@@ -52,6 +52,10 @@ Contents:
   because all ten of its requirements are already satisfied by
   `environment.yml`'s exact-build pins and letting pip resolve them would churn
   the pinned env
+- **`cda_dense_merge`**, ours rather than upstream's: the streaming gather
+  helper for `EMR_region_motif_frequency`, compiled from
+  [`cda_dense_merge.cpp`](cda_dense_merge.cpp) beside this file to
+  `/usr/local/bin/cda_dense_merge`. See [below](#the-dense-gather-helper)
 - **`rpy2` 3.3.3 in ABI mode.** `environment.yml` pip-builds rpy2 during env
   creation, and there is no R inside the conda env for it to compile against.
   `RPY2_CFFI_MODE=ABI` at build time makes it bind to `libR` at run time
@@ -82,6 +86,43 @@ rename fails the build instead of failing later inside a feature:
 Note that the `chmod -R a+rX /opt/cfDNAanalyzer` in the same stage does **not**
 cover these. Capital `X` only adds `+x` to directories and to files that are
 already executable, which in this tree is none of them.
+
+## The dense gather helper
+
+`EMR_region_motif_frequency` is the one cfDNAanalyzer matrix wide enough
+(15.6 million columns in the 72-sample production run) that aligning it in
+Python is not worth the cost, so the `cda_emr_schema` and `cda_emr_row` rules in
+[`workflow/rules/cfdnaanalyzer.smk`](../../workflow/rules/cfdnaanalyzer.smk)
+hand it to `cda_dense_merge` instead. It holds one feature name per open file
+and nothing else: `schema` heap-merges the sorted per-sample headers into their
+union, and `row` rewrites one sample's data row against that union.
+
+The source sits beside this Dockerfile, not in `workflow/scripts/`, because it
+is a component of the image and not a file the workflow reads at run time. It
+used to be compiled inside each job from the workflow's own copy, which repeated
+an identical build once per sample and put a toolchain dependency in the
+critical path of every one of those jobs — a missing `g++`, or a compile that
+broke for a reason having nothing to do with the data, surfaced as that sample's
+gather failing. Building it here fails the *image build* instead, and the
+workflow resolves it on `PATH` the way it resolves `CDA`.
+
+It is linked with `-static-libstdc++ -static-libgcc` so it does not depend on
+what is first on `LD_LIBRARY_PATH`, which the `rpy2` entry above prepends to,
+and the build asserts the binary exists, is executable and prints its usage
+error on an empty argument list before any job can depend on it.
+
+[`.tests/test_merge_cda_features.py`](../../.tests/test_merge_cda_features.py)
+covers both modes. It states the contract against a small Python model of it
+rather than compiling anything, so the suite needs no toolchain — but set
+`CDA_DENSE_MERGE` to a built binary and the same cases run against that binary
+instead, which is how the contract is checked against what the jobs run:
+
+```bash
+docker run --rm -v $PWD:/repo -w /repo \
+    -e CDA_DENSE_MERGE=/usr/local/bin/cda_dense_merge \
+    rroutsong/cfdna_analyzer:0.0.1 \
+    python3 .tests/test_merge_cda_features.py
+```
 
 ## Reference files
 

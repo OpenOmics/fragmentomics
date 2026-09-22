@@ -217,6 +217,39 @@ RUN set -eux; \
     done
 
 # -----------------------------------------------------------------------------
+# cda_dense_merge: the streaming gather helper for EMR_region_motif_frequency,
+# the one cfDNAanalyzer matrix too wide (15.6 million columns in the 72-sample
+# production run) to align in Python. The cda_emr_schema and cda_emr_row rules
+# in workflow/rules/cfdnaanalyzer.smk run it as a command.
+#
+# It is compiled here, once, rather than from source inside each job. The rules
+# that use it are per-sample, so compiling at run time repeated the same build
+# once per sample and put a toolchain dependency inside the critical path of
+# every one of those jobs: a g++ that is absent, or a compile that fails for a
+# reason having nothing to do with the sample, presents as that sample's gather
+# failing. Building at image level fails the build instead, and the workflow
+# resolves the binary on PATH the same way it resolves CDA.
+#
+# -static-libstdc++ -static-libgcc: the binary is only ever run inside this
+# image, but linking the two toolchain runtimes in keeps it independent of what
+# is first on LD_LIBRARY_PATH, which the R/rpy2 entry above prepends to.
+#
+# The build is asserted, not assumed: the binary must exist, must be executable,
+# and must reject an empty argument list with its usage error, which proves it
+# links and starts before any job depends on it.
+# -----------------------------------------------------------------------------
+COPY cda_dense_merge.cpp /opt/build/cda_dense_merge.cpp
+RUN set -eux; \
+    g++ -O3 -std=c++17 -Wall -Wextra -pedantic \
+        -static-libstdc++ -static-libgcc \
+        /opt/build/cda_dense_merge.cpp -o /usr/local/bin/cda_dense_merge; \
+    chmod a+rx /usr/local/bin/cda_dense_merge; \
+    test -x /usr/local/bin/cda_dense_merge; \
+    ! cda_dense_merge 2>/tmp/usage.txt; \
+    grep -q 'usage: cda_dense_merge schema|row' /tmp/usage.txt; \
+    rm -f /tmp/usage.txt
+
+# -----------------------------------------------------------------------------
 # provenance
 # -----------------------------------------------------------------------------
 ADD Dockerfile /Dockerfile

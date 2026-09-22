@@ -13,7 +13,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "workflow/scripts/merge_cda_features.py"
-HELPER_SOURCE = ROOT / "workflow/scripts/cfdnaanalyzer_dense_csv_merge.cpp"
+# cda_dense_merge is compiled into the cfDNAanalyzer image (see
+# docker/cfDNAanalyzer/cda_dense_merge.cpp), so it is not importable here and
+# these tests do not build it: they state its contract against the Python model
+# below, which needs no toolchain. Set CDA_DENSE_MERGE to a built binary and the
+# same cases run against that instead, which is how the contract gets checked
+# against the implementation the jobs actually run.
+HELPER_BINARY = os.environ.get("CDA_DENSE_MERGE")
 SPEC = importlib.util.spec_from_file_location("merge_cda_features", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -94,14 +100,165 @@ class OrdinaryMergeTests(ScratchCase):
         self.assertEqual(rows[2], ["s2", "0", "", "3"])
 
 
+class HelperError(RuntimeError):
+    """What cda_dense_merge exiting non-zero looks like to these tests."""
+
+
+def read_source_list(path):
+    """The `sample<TAB>path` rows the schema mode is handed."""
+    entries = []
+    for line in Path(path).read_text().splitlines():
+        sample, tab, source = line.partition("\t")
+        if not tab or not sample or not source:
+            raise HelperError("invalid source-list row: " + line)
+        entries.append((sample, source))
+    if not entries:
+        raise HelperError("source list is empty")
+    return entries
+
+
+def feature_names(path):
+    """
+    One source's feature columns under the helper's naming rules: the header
+    must start `sample,label` and its features must already be sorted, and a
+    name repeated within one header takes a `.N` suffix so that every column of
+    a source stays addressable by name.
+    """
+    with open(path, newline="") as handle:
+        header = next(csv.reader(handle), [])
+    if header[:2] != ["sample", "label"]:
+        raise HelperError("header does not begin with sample,label in " + str(path))
+    names = []
+    previous_raw = previous_emitted = None
+    duplicates = 0
+    for raw in header[2:]:
+        if previous_raw is not None and raw < previous_raw:
+            raise HelperError(
+                "feature header is not sorted in {}: {} follows {}".format(
+                    path, raw, previous_raw
+                )
+            )
+        if raw == previous_raw:
+            duplicates += 1
+            current = "{}.{}".format(raw, duplicates)
+        else:
+            duplicates = 0
+            current = raw
+        # Resolves a header whose raw columns are already a,a,a.1: the suffix
+        # the duplicate above earns is a name the next column may also carry.
+        if previous_emitted is not None and current <= previous_emitted:
+            current += ".1"
+        if previous_emitted is not None and current <= previous_emitted:
+            raise HelperError(
+                "duplicate-name normalization is not monotonic in " + str(path)
+            )
+        names.append(current)
+        previous_raw, previous_emitted = raw, current
+    return names
+
+
+def write_csv_row(path, fields):
+    with open(path, "w", newline="") as handle:
+        csv.writer(handle, lineterminator="\n").writerow(fields)
+
+
+def model_schema(listing, schema_path, header_path):
+    """
+    The schema mode: the union of every source's feature names, ascending.
+
+    The helper heap-merges the sorted headers so that it holds one name per
+    source at a time; at these sizes a sorted set is the same answer, since
+    every source's names are ascending by the time feature_names() returns.
+    """
+    union = set()
+    for _, source in read_source_list(listing):
+        union.update(feature_names(source))
+    ordered = sorted(union)
+    with open(schema_path, "w") as handle:
+        handle.writelines(name + "\n" for name in ordered)
+    write_csv_row(header_path, ["sample", "label"] + ordered)
+
+
+def model_row(source, sample, schema_path, output_path):
+    """
+    The row mode: one sample's data row rewritten against the union schema,
+    empty where the sample does not carry that feature.
+    """
+    features = feature_names(source)
+    taken = 0
+    present = []
+    for feature in Path(schema_path).read_text().splitlines():
+        if taken < len(features) and features[taken] < feature:
+            raise HelperError(
+                "source feature is absent from schema: " + features[taken]
+            )
+        present.append(taken < len(features) and features[taken] == feature)
+        if present[-1]:
+            taken += 1
+    if taken < len(features):
+        raise HelperError("schema ended before source header")
+
+    with open(source, newline="") as handle:
+        rows = list(csv.reader(handle))
+    if len(rows) < 2:
+        # A feature cfDNAanalyzer dropped the sample for leaves a header and no
+        # data row. An empty output is how that sample stays out of the matrix.
+        Path(output_path).write_bytes(b"")
+        return
+    data = rows[1]
+    if len(data) < 2:
+        raise HelperError("missing label in " + str(source))
+    if data[0] != sample:
+        raise HelperError("data-row sample differs in " + str(source))
+    values = data[2:]
+    if len(values) < len(features):
+        raise HelperError("data row ended before its header in " + str(source))
+    if len(values) > len(features):
+        raise HelperError(
+            "data row has more fields than its header in " + str(source)
+        )
+    fields = data[:2]
+    cursor = 0
+    for bit in present:
+        fields.append(values[cursor] if bit else "")
+        cursor += int(bit)
+    write_csv_row(output_path, fields)
+
+
+def run_binary(arguments):
+    result = subprocess.run(
+        [HELPER_BINARY] + arguments, text=True, capture_output=True
+    )
+    if result.returncode != 0:
+        raise HelperError(result.stderr.strip())
+
+
+def dense_schema(listing, schema_path, header_path):
+    if HELPER_BINARY is None:
+        model_schema(listing, schema_path, header_path)
+        return
+    run_binary([
+        "schema", "--list", str(listing),
+        "--schema", str(schema_path), "--header", str(header_path),
+    ])
+
+
+def dense_row(source, sample, schema_path, output_path):
+    if HELPER_BINARY is None:
+        model_row(source, sample, schema_path, output_path)
+        return
+    run_binary([
+        "row", "--source", str(source), "--sample", sample,
+        "--schema", str(schema_path), "--output", str(output_path),
+    ])
+
+
 class DenseHelperTests(ScratchCase):
-    def setUp(self):
-        super().setUp()
-        self.helper = self.root / "cda_dense_merge"
-        subprocess.run([
-            "/usr/bin/g++", "-O2", "-std=c++17", "-Wall", "-Wextra",
-            "-pedantic", str(HELPER_SOURCE), "-o", str(self.helper),
-        ], check=True)
+    """
+    The contract the cda_emr_schema and cda_emr_row rules depend on, stated
+    against the Python model above and, when CDA_DENSE_MERGE names a binary,
+    against that binary as well.
+    """
 
     def run_schema(self, sources):
         listing = self.root / "sources.tsv"
@@ -110,10 +267,7 @@ class DenseHelperTests(ScratchCase):
         ))
         schema = self.root / "schema.txt"
         header = self.root / "header.csv"
-        subprocess.run([
-            str(self.helper), "schema", "--list", str(listing),
-            "--schema", str(schema), "--header", str(header),
-        ], check=True)
+        dense_schema(listing, schema, header)
         return schema, header
 
     def test_schema_and_rows(self):
@@ -125,10 +279,7 @@ class DenseHelperTests(ScratchCase):
         self.assertEqual(schema.read_text(), "a\nb\nc\n")
         self.assertEqual(header.read_text(), "sample,label,a,b,c\n")
         row = self.root / "s2.row.csv"
-        subprocess.run([
-            str(self.helper), "row", "--source", str(second),
-            "--sample", "s2", "--schema", str(schema), "--output", str(row),
-        ], check=True)
+        dense_row(second, "s2", schema, row)
         self.assertEqual(row.read_text(), "s2,0,,30,40\n")
 
     def test_header_only_source_yields_no_row(self):
@@ -136,10 +287,7 @@ class DenseHelperTests(ScratchCase):
         source.write_text("sample,label,a\n")
         schema, _ = self.run_schema([("s1", source)])
         row = self.root / "empty.row.csv"
-        subprocess.run([
-            str(self.helper), "row", "--source", str(source),
-            "--sample", "s1", "--schema", str(schema), "--output", str(row),
-        ], check=True)
+        dense_row(source, "s1", schema, row)
         self.assertEqual(row.read_bytes(), b"")
 
     def test_duplicate_columns_are_preserved(self):
@@ -149,24 +297,39 @@ class DenseHelperTests(ScratchCase):
         self.assertEqual(schema.read_text(), "a\na.1\nb\n")
         self.assertEqual(header.read_text(), "sample,label,a,a.1,b\n")
         row = self.root / "duplicate.row.csv"
-        subprocess.run([
-            str(self.helper), "row", "--source", str(source),
-            "--sample", "s1", "--schema", str(schema), "--output", str(row),
-        ], check=True)
+        dense_row(source, "s1", schema, row)
         self.assertEqual(row.read_text(), "s1,1,10,11,20\n")
+
+    def test_quoted_column_names_round_trip(self):
+        source = self.root / "quoted.csv"
+        source.write_text('sample,label,"a,a",b\ns1,1,10,20\n')
+        schema, header = self.run_schema([("s1", source)])
+        self.assertEqual(schema.read_text(), "a,a\nb\n")
+        self.assertEqual(header.read_text(), 'sample,label,"a,a",b\n')
 
     def test_unsorted_header_is_rejected(self):
         source = self.root / "unsorted.csv"
         source.write_text("sample,label,b,a\ns1,1,10,11\n")
-        listing = self.root / "sources.tsv"
-        listing.write_text("s1\t{}\n".format(source))
-        result = subprocess.run([
-            str(self.helper), "schema", "--list", str(listing),
-            "--schema", str(self.root / "bad-schema"),
-            "--header", str(self.root / "bad-header"),
-        ], text=True, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("not sorted", result.stderr)
+        with self.assertRaises(HelperError) as raised:
+            self.run_schema([("s1", source)])
+        self.assertIn("not sorted", str(raised.exception))
+
+    def test_feature_missing_from_schema_is_rejected(self):
+        source = self.root / "extra.csv"
+        source.write_text("sample,label,a,b\ns1,1,10,20\n")
+        schema = self.root / "short-schema.txt"
+        schema.write_text("b\n")
+        with self.assertRaises(HelperError) as raised:
+            dense_row(source, "s1", schema, self.root / "extra.row.csv")
+        self.assertIn("absent from schema", str(raised.exception))
+
+    def test_wrong_sample_is_rejected(self):
+        source = self.root / "wrong.csv"
+        source.write_text("sample,label,a\nother,1,10\n")
+        schema, _ = self.run_schema([("s1", source)])
+        with self.assertRaises(HelperError) as raised:
+            dense_row(source, "s1", schema, self.root / "wrong.row.csv")
+        self.assertIn("sample differs", str(raised.exception))
 
 
 if __name__ == "__main__":

@@ -568,6 +568,10 @@ if cda_features:
             """
             Stream the sorted regional-EMR headers into their union schema.
             Only one feature name per sample is retained in memory.
+
+            cda_dense_merge is the streaming helper, compiled into the
+            cfDNAanalyzer image and resolved on PATH; see
+            docker/cfDNAanalyzer/cda_dense_merge.cpp for its two modes.
             """
             input:
                 csvs                    = expand(
@@ -594,7 +598,6 @@ if cda_features:
                 rname                   = "cda_emr_schema",
                 tmpdir                  = tmpdir,
                 python_script           = join(bin_dir, 'merge_cda_features.py'),
-                helper_source           = join(bin_dir, 'cfdnaanalyzer_dense_csv_merge.cpp'),
                 sources                 = ' '.join(
                                             join(
                                               cda_sample_dir,
@@ -610,15 +613,13 @@ if cda_features:
                 tmp=$(mktemp -d -p \"{params.tmpdir}\")
                 trap 'rm -rf \"${{tmp}}\"' EXIT
 
-                g++ -O3 -std=c++17 -Wall -Wextra -pedantic \\
-                    {params.helper_source} -o \"${{tmp}}/cda_dense_merge\"
                 python {params.python_script} source-list \\
                     --sources {params.sources} \\
                     --samples {params.samples} \\
                     --output \"${{tmp}}/sources.tsv\"
 
                 if [ -s \"${{tmp}}/sources.tsv\" ]; then
-                    \"${{tmp}}/cda_dense_merge\" schema \\
+                    cda_dense_merge schema \\
                         --list \"${{tmp}}/sources.tsv\" \\
                         --schema \"${{tmp}}/schema.txt\" \\
                         --header \"${{tmp}}/header.csv\"
@@ -637,6 +638,11 @@ if cda_features:
             """
             Align one regional-EMR sample row to the union schema. Splitting by
             sample makes the 15-million-column transform parallel and bounded.
+
+            The row is written in place rather than staged through scratch: it
+            is the only thing this job produces, it is a temp() output only the
+            assemble rule consumes, and cda_dense_merge either writes it whole
+            or exits non-zero, leaving Snakemake to remove the partial file.
             """
             input:
                 csv                     = join(
@@ -658,21 +664,14 @@ if cda_features:
                 int(allocated("threads", "cda_emr_row", cluster))
             params:
                 rname                   = "cda_emr_row",
-                tmpdir                  = tmpdir,
-                helper_source           = join(bin_dir, 'cfdnaanalyzer_dense_csv_merge.cpp'),
             shell:
                 dedent("""
-                if [ ! -d \"{params.tmpdir}\" ]; then mkdir -p \"{params.tmpdir}\"; fi
-                tmp=$(mktemp -d -p \"{params.tmpdir}\")
-                trap 'rm -rf \"${{tmp}}\"' EXIT
                 mkdir -p \"$(dirname {output.row})\"
 
                 if [ ! -s {input.csv} ]; then
                     : > {output.row}
                 else
-                    g++ -O3 -std=c++17 -Wall -Wextra -pedantic \\
-                        {params.helper_source} -o \"${{tmp}}/cda_dense_merge\"
-                    \"${{tmp}}/cda_dense_merge\" row \\
+                    cda_dense_merge row \\
                         --source {input.csv} \\
                         --sample {wildcards.sample} \\
                         --schema {input.schema} \\

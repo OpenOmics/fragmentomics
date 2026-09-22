@@ -175,9 +175,10 @@ the same bounded-memory implementation.
 
 `EMR_region_motif_frequency` can contain millions of columns and is split
 further. `cda_emr_schema` streams its sorted headers into one union using
-[`cfdnaanalyzer_dense_csv_merge.cpp`](../../workflow/scripts/cfdnaanalyzer_dense_csv_merge.cpp),
-`cda_emr_row` aligns each sample independently, and `cda_emr_assemble` appends
-the completed rows. The intermediate schema and rows are temporary Snakemake
+`cda_dense_merge`, `cda_emr_row` aligns each sample independently, and
+`cda_emr_assemble` appends the completed rows. `cda_dense_merge` is a C++
+helper, [compiled into the cfDNAanalyzer image](../../docker/cfDNAanalyzer/cda_dense_merge.cpp)
+and run from `PATH`, rather than built from source inside each of those jobs. The intermediate schema and rows are temporary Snakemake
 outputs. A sample that cfDNAanalyzer dropped for a feature has no data row and
 is absent from the final matrix, exactly as in an unsplit cfDNAanalyzer run.
 

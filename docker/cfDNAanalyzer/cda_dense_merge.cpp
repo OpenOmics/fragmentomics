@@ -1,3 +1,38 @@
+// =============================================================================
+// cda_dense_merge -- bounded-memory gather for cfDNAanalyzer's widest matrix
+//
+// EMR_region_motif_frequency reaches millions of columns (15.6 million in the
+// 72-sample production run), which is too wide to hold a parsed row of in
+// Python at a tolerable cost. This is the streaming helper the split gather in
+// workflow/rules/cfdnaanalyzer.smk uses instead. Every other cfDNAanalyzer
+// matrix is gathered by workflow/scripts/merge_cda_features.py.
+//
+// It lives beside the Dockerfile rather than in workflow/scripts/ because it is
+// compiled once into the image, at /usr/local/bin/cda_dense_merge, instead of
+// being a file the workflow reads at run time. See the Dockerfile stage that
+// builds it.
+//
+// Two modes, both holding one feature name per open source and nothing else:
+//
+//   cda_dense_merge schema --list <sources.tsv> --schema <out> --header <out>
+//       Heap-merges the already-sorted feature headers of every source named in
+//       sources.tsv (a `sample<TAB>path` row per sample) into their union. The
+//       schema is one feature per line for the row mode to read back; the
+//       header is the merged CSV's own header line.
+//
+//   cda_dense_merge row --source <csv> --sample <name> --schema <schema>
+//                       --output <csv>
+//       Rewrites one sample's single data row against that schema, leaving a
+//       field empty where the sample lacks the feature. A source with a header
+//       but no data row yields an empty output, which is how a sample
+//       cfDNAanalyzer dropped stays absent from the merged matrix.
+//
+// Both modes print `key=value` counts on stdout for the job log, and both fail
+// loudly rather than guessing: an unsorted header, a feature missing from the
+// schema, a sample name that disagrees with the one expected, or a data row
+// whose field count differs from its header is an error, not a repair.
+// =============================================================================
+
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
@@ -286,7 +321,8 @@ std::string argument(int argc, char** argv, const std::string& name) {
 
 int main(int argc, char** argv) {
   try {
-    if (argc < 2) throw std::runtime_error("usage: helper schema|row [arguments]");
+    if (argc < 2)
+      throw std::runtime_error("usage: cda_dense_merge schema|row [arguments]");
     const std::string mode = argv[1];
     if (mode == "schema") {
       schema_mode(argument(argc, argv, "--list"), argument(argc, argv, "--schema"),
