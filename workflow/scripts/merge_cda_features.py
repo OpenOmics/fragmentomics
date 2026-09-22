@@ -152,17 +152,20 @@ def build_matrix_candidate(name, sources, candidate):
     """Merge one matrix to ``candidate`` and return validation metadata."""
     candidate = Path(candidate)
     candidate.parent.mkdir(parents=True, exist_ok=True)
-    header_sources = [item for item in sources if item.header_bytes]
-    populated = [item for item in header_sources if item.rows]
-    if not header_sources:
+    # Match the original pandas gather: a header-only sample was an empty
+    # DataFrame and therefore could not define or extend the cohort schema.
+    # Only samples with a data row contribute columns.  This matters when a
+    # dropped sample retains a stale or otherwise different header.
+    populated = [item for item in sources if item.rows]
+    if not populated:
         candidate.write_bytes(b"sample,label\n")
         return merge_result("all_empty", 2, populated, sources)
 
-    reference = header_sources[0]
+    reference = populated[0]
     identical = all(
         item.header_bytes == reference.header_bytes
         and item.header_sha256 == reference.header_sha256
-        for item in header_sources[1:]
+        for item in populated[1:]
     )
     if identical:
         with candidate.open("wb") as destination:
@@ -183,7 +186,7 @@ def build_matrix_candidate(name, sources, candidate):
     )
     union = []
     seen = set()
-    for item in header_sources:
+    for item in populated:
         try:
             columns = pd.read_csv(item.path, nrows=0).columns
         except pd.errors.EmptyDataError:
@@ -277,8 +280,57 @@ def merge_site_lists(args):
     ))
 
 
+def has_data_record(path):
+    """Return whether a CSV has content after its newline-terminated header.
+
+    Regional EMR headers can contain millions of fields, so this deliberately
+    avoids ``csv.reader`` and never retains the header or data row in memory.
+    Blank line endings after the header do not count as a data record.
+    """
+    path = Path(path)
+    if not path.is_file() or path.stat().st_size == 0:
+        return False
+
+    header_prefix = bytearray()
+    in_header = True
+    have_data = False
+    with path.open("rb") as handle:
+        while True:
+            block = handle.read(CHUNK)
+            if not block:
+                break
+            if in_header:
+                newline = block.find(b"\n")
+                if newline < 0:
+                    header_part, data_part = block, b""
+                else:
+                    header_part = block[: newline + 1]
+                    data_part = block[newline + 1 :]
+                    in_header = False
+                if len(header_prefix) < 128:
+                    header_prefix.extend(header_part[: 128 - len(header_prefix)])
+            else:
+                data_part = block
+            if data_part.strip(b"\r\n"):
+                have_data = True
+                break
+
+    if in_header:
+        raise ValueError("Header is not newline-terminated: {}".format(path))
+    prefix = bytes(header_prefix)
+    if prefix.startswith(b"\xef\xbb\xbf"):
+        prefix = prefix[3:]
+    if not (
+        prefix.startswith(b"sample,label,")
+        or prefix.startswith(b"sample,label\r\n")
+        or prefix.startswith(b"sample,label\n")
+    ):
+        raise ValueError("Header does not begin with sample,label: {}".format(path))
+    return have_data
+
+
 def write_source_list(args):
-    """Write the non-empty regional-EMR inputs consumed by the C++ helper."""
+    """Write populated regional-EMR inputs consumed by the C++ helper."""
     if len(args.sources) != len(args.samples):
         raise ValueError("--sources and --samples must have the same length")
     output = Path(args.output)
@@ -286,7 +338,7 @@ def write_source_list(args):
     with output.open("w") as handle:
         for source, sample in zip(args.sources, args.samples):
             source = Path(source)
-            if source.is_file() and source.stat().st_size:
+            if has_data_record(source):
                 if "\t" in str(source) or "\n" in str(source):
                     raise ValueError("Unsupported source path: {}".format(source))
                 handle.write("{}\t{}\n".format(sample, source))

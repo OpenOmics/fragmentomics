@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,7 +79,19 @@ class OrdinaryMergeTests(ScratchCase):
         result = MODULE.build_matrix_candidate("PFE", sources, output)
         self.assertEqual(result["rows"], 0)
         self.assertEqual(result["missing_samples"], ["s1", "s2"])
-        self.assertEqual(output.read_text(), "sample,label,a\n")
+        self.assertEqual(output.read_text(), "sample,label\n")
+
+    def test_header_only_columns_do_not_extend_populated_schema(self):
+        sources = [
+            self.source("s1", "sample,label,fallback\n"),
+            self.source("s2", "sample,label,measured\ns2,0,4\n"),
+        ]
+        output = self.root / "merged.csv"
+        result = MODULE.build_matrix_candidate("x", sources, output)
+        self.assertEqual(result["method"], "byte_stream")
+        self.assertEqual(
+            output.read_text(), "sample,label,measured\ns2,0,4\n"
+        )
 
     def test_rejects_wrong_sample(self):
         path = self.root / "wrong.csv"
@@ -289,6 +302,68 @@ class DenseHelperTests(ScratchCase):
         row = self.root / "empty.row.csv"
         dense_row(source, "s1", schema, row)
         self.assertEqual(row.read_bytes(), b"")
+
+    def test_source_list_excludes_header_only_schema_columns(self):
+        header_only = self.root / "s1.csv"
+        populated = self.root / "s2.csv"
+        header_only.write_text("sample,label,fallback\n")
+        populated.write_text("sample,label,measured\ns2,0,4\n")
+        listing = self.root / "sources.tsv"
+        MODULE.write_source_list(SimpleNamespace(
+            sources=[str(header_only), str(populated)],
+            samples=["s1", "s2"],
+            output=str(listing),
+        ))
+        self.assertEqual(listing.read_text(), "s2\t{}\n".format(populated))
+        schema = self.root / "schema.txt"
+        header = self.root / "header.csv"
+        dense_schema(listing, schema, header)
+        self.assertEqual(schema.read_text(), "measured\n")
+        self.assertEqual(header.read_text(), "sample,label,measured\n")
+
+    def test_source_list_excludes_zero_byte_and_all_header_only_sources(self):
+        zero_byte = self.root / "zero.csv"
+        header_only = self.root / "header.csv"
+        zero_byte.write_bytes(b"")
+        header_only.write_text("sample,label,fallback\n")
+        listing = self.root / "sources.tsv"
+        MODULE.write_source_list(SimpleNamespace(
+            sources=[str(zero_byte), str(header_only)],
+            samples=["s1", "s2"],
+            output=str(listing),
+        ))
+        self.assertEqual(listing.read_bytes(), b"")
+
+    def test_source_list_ignores_blank_lines_after_header(self):
+        source = self.root / "blank-lines.csv"
+        source.write_bytes(b"sample,label,fallback\r\n\r\n\n")
+        listing = self.root / "sources.tsv"
+        MODULE.write_source_list(SimpleNamespace(
+            sources=[str(source)], samples=["s1"], output=str(listing)
+        ))
+        self.assertEqual(listing.read_bytes(), b"")
+
+    def test_source_list_rejects_malformed_header(self):
+        source = self.root / "malformed.csv"
+        source.write_text("sample,wrong,a\ns1,1,2\n")
+        with self.assertRaises(ValueError) as raised:
+            MODULE.has_data_record(source)
+        self.assertIn("does not begin with sample,label", str(raised.exception))
+
+    def test_source_list_rejects_unterminated_header(self):
+        source = self.root / "unterminated.csv"
+        source.write_text("sample,label,a")
+        with self.assertRaises(ValueError) as raised:
+            MODULE.has_data_record(source)
+        self.assertIn("not newline-terminated", str(raised.exception))
+
+    def test_source_list_scans_large_header_in_bounded_blocks(self):
+        source = self.root / "large.csv"
+        with source.open("wb") as handle:
+            handle.write(b"sample,label,")
+            handle.write(b"a" * (MODULE.CHUNK + 17))
+            handle.write(b"\ns1,1,2\n")
+        self.assertTrue(MODULE.has_data_record(source))
 
     def test_duplicate_columns_are_preserved(self):
         source = self.root / "duplicate.csv"
