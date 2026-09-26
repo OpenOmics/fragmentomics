@@ -59,10 +59,13 @@ from src.install import(
 )
 from src.utils import (
     Colors,
+    cda_bin_size,
+    cda_feature_list,
     check_cache,
     check_snakemake_version,
     err,
     fatal,
+    genome_build,
     interval_size,
     permissions,
     quality_threshold,
@@ -298,7 +301,10 @@ def parsed_arguments(name, description):
                 [--interval INTERVAL] \\
                 [--bin-size BIN_SIZE] \\
                 [--mapscore MAPSCORE] [--baseqscore BASEQSCORE] \\
-                -g {{hg38,hg19}} \\
+                [--cda-features CDA_FEATURES] \\
+                [--cda-regions CDA_REGIONS] \\
+                [--cda-cna-bin-size CDA_CNA_BIN_SIZE] \\
+                -g {{hg38,hg19,GENOME_CONFIG.json}} \\
                 --input INPUT [INPUT ...] \\
                 --output OUTPUT
 
@@ -328,13 +334,37 @@ def parsed_arguments(name, description):
                                 provided working directory has not been initialized,
                                 it will be created automatically.
                                   Example: --output pipeline_output
-          -g, --genome {{hg38,hg19}}
-                                Reference genome build. Selects the bundled set of
+          -g, --genome {{hg38,hg19,GENOME_CONFIG.json}}
+                                Reference genome build. Selects the set of
                                 reference files (chrom sizes, 2bit sequence, interval
                                 and TSS files, and any blacklist/gap files) the
                                 pipeline uses to characterize fragmentation features.
-                                Vaild options include: hg38 or hg19, default: hg38.
+                                Valid options include: hg38 or hg19, which are the
+                                builds bundled in the pipeline's config/genome.json;
+                                or the path to a JSON file describing a reference set
+                                of your own, in the shape of one entry of that file:
+                                  {{
+                                    "chrom_sizes":   "/refs/mm10.chrom.sizes",
+                                    "ref2bit":       "/refs/mm10.2bit",
+                                    "reference_fa":  "/refs/mm10.fa",
+                                    "dict":          "/refs/mm10.dict",
+                                    "tss":           "/refs/tss.mm10_sorted.bed",
+                                    "tss_interval":  "/refs/tss.mm10_interval_sorted.bed"
+                                  }}
+                                The build is named after the config file, so
+                                mm10.json labels its output mm10; set a "name" key
+                                to choose the label yourself. Only "tss_interval" is
+                                required, since the coverage analysis every run
+                                performs reads it; every other key gates just the
+                                analyses that read it, so a build that leaves one out
+                                skips those rather than failing. Reference paths are
+                                added as container bind points automatically. Note
+                                that cfDNAanalyzer only accepts hg19 or hg38, so a
+                                custom build has to declare which of the two its
+                                coordinates match, with a "cda_genome" key, before
+                                --cda-features can select anything, default: hg38.
                                   Example: --genome hg38
+                                  Example: --genome /refs/mm10.json
 
         {3}{4}Analysis options:{5}
           --fragment-minimum FRAGMENT_MINIMUM
@@ -408,6 +438,83 @@ def parsed_arguments(name, description):
                                 applied to the staged alignments by samtools. A
                                 value of 0 keeps every read, default: 20.
                                   Example: --baseqscore 20
+          --cda-features CDA_FEATURES
+                                Comma-separated list of cfDNAanalyzer features to
+                                extract. cfDNAanalyzer is an additional, and fairly
+                                expensive, feature extraction suite the pipeline can
+                                run over the same analysis BAMs; only the features
+                                named here are extracted, and none are extracted by
+                                default. Feature extraction is all that runs. The
+                                feature processing, feature selection and machine
+                                learning modules of cfDNAanalyzer are never
+                                invoked, so no classifier is fit, no
+                                cross-validation is performed and no sample is
+                                ever assigned a class or a probability. What you
+                                get are feature matrices; any inference over them
+                                is left entirely to you.
+                                Each feature is written to the cfdnaanalyzer/features
+                                directory as one or more CSV matrices of samples by
+                                measurements. Feature names are case-insensitive,
+                                'all' selects every feature and 'none' selects none,
+                                default: none.
+                                Vaild features, by the region they describe:
+                                 • Genome-wide
+                                    - CNA:  copy number alterations, called with the
+                                            bundled ichorCNA at the bin size given by
+                                            --cda-cna-bin-size
+                                    - EM:   fragment end motif frequencies and motif
+                                            diversity score (MDS)
+                                    - FP:   short/long fragmentation profile in 100kb
+                                            windows
+                                 • Region-specific, measured over --cda-regions
+                                    - NOF:  nucleosome occupancy and fuzziness
+                                    - NP:   nucleosome profile (mean coverage, central
+                                            coverage and amplitude) at the bundled
+                                            Griffin transcription factor site lists
+                                    - WPS:  windowed protection score, long and short
+                                    - OCF:  orientation-aware cfDNA fragmentation
+                                    - EMR:  end motif frequencies and MDS, aggregated
+                                            over and reported per region
+                                    - FPR:  fragmentation profile per region
+                                 • Transcription start sites
+                                    - PFE:  promoter fragmentation entropy. This is a
+                                            deep targeted-panel measurement, and
+                                            cfDNAanalyzer drops any sample with less
+                                            than 500x median depth over the promoters
+                                            it scores, so a typical whole genome
+                                            sample will be absent from the matrix.
+                                    - TSSC: average coverage around each TSS, using
+                                            --left-tss-flank and --right-tss-flank
+                                Please note: WPS is scored one region at a time, so
+                                its run time grows with the number of regions in
+                                --cda-regions. Pair it with a focused region BED
+                                rather than the genome-wide default.
+                                Please note: EM, FP, NP, OCF, EMR, FPR and PFE are
+                                paired-end only, and cfDNAanalyzer fails rather
+                                than skipping them if handed single-end reads. On
+                                single-end data select only CNA, NOF, WPS or TSSC.
+                                  Example: --cda-features CNA,EM,OCF
+                                  Example: --cda-features all
+          --cda-regions CDA_REGIONS
+                                Path to a BED file of the regions cfDNAanalyzer's
+                                region-specific features (NOF, NP, WPS, OCF, EMR and
+                                FPR) are measured over. Only the first three columns
+                                are used, and the regions are sorted before use, so
+                                any BED flavor will do. Without this option the genome
+                                build's TSS interval file is used, which is every
+                                Ensembl TSS padded by 2kb, roughly 62,000 regions.
+                                Ignored when --cda-features selects no region-specific
+                                feature, default: the genome build's TSS intervals.
+                                  Example: --cda-regions resources/promoters.bed
+          --cda-cna-bin-size CDA_CNA_BIN_SIZE
+                                Bin size, in kilobases, for the cfDNAanalyzer CNA
+                                feature. cfDNAanalyzer reads pre-computed GC and
+                                mappability tracks for this bin size from the
+                                ichorCNA it bundles, and those only exist at 10, 50,
+                                500 and 1000 kilobases, so no other size can be
+                                given. Ignored when --cda-features does not select
+                                CNA, default: 1000.
+                                  Example: --cda-cna-bin-size 500
 
         {3}{4}Orchestration options:{5}
           --mode {{slurm,local}}
@@ -525,6 +632,17 @@ def parsed_arguments(name, description):
               --output pipeline_output \\
               --mode slurm
 
+          # Step 2C.) Run the {0} pipeline
+          # against your own reference files
+          # instead of a bundled build, by
+          # pointing --genome at a JSON file
+          # describing them.
+          {0} run \\
+              --genome /refs/mm10.json \\
+              --input .tests/*.bam \\
+              --output pipeline_output \\
+              --mode slurm
+
         {2}{3}Version:{4}
           {1}
         """.format(name, __version__, c.bold, c.url, c.end))
@@ -540,11 +658,15 @@ def parsed_arguments(name, description):
     )
 
     # Required Arguments
-    # Reference genome
+    # Reference genome. Either the alias of a build bundled in
+    # config/genome.json or the path to a JSON file describing a build of the
+    # user's own in the same shape. The value is kept as the string the user
+    # gave it and resolved into a reference file set by src.run.setup(), which
+    # is where config/genome.json has been merged into the pipeline config and
+    # so is the only place a custom build can be injected alongside it.
     subparser_run.add_argument(
         '-g', '--genome',
-        type = str,
-        choices = ('hg38', 'hg19'),
+        type = lambda option: genome_build(parser, option, __home__),
         required = True,
         help = argparse.SUPPRESS
     )
@@ -655,6 +777,45 @@ def parsed_arguments(name, description):
         type = lambda option: quality_threshold(parser, option),
         required = False,
         default = 20,
+        help = argparse.SUPPRESS
+    )
+
+    # cfDNAanalyzer feature extraction. The features to extract are opt-in:
+    # cfDNAanalyzer is a large, slow suite of its own, so an empty list (the
+    # default) leaves it out of the workflow entirely rather than adding it to
+    # every run. The parsed value stays a list so src.run.setup() records it in
+    # config['options'] as one, which is how the workflow selects its rules.
+    subparser_run.add_argument(
+        '--cda-features',
+        type = lambda option: cda_feature_list(parser, option),
+        required = False,
+        default = [],
+        help = argparse.SUPPRESS
+    )
+
+    # Regions cfDNAanalyzer's region-specific features are measured over. It
+    # will not run any of them without a region BED, so when this is not given
+    # the workflow falls back to the genome build's TSS intervals. The default
+    # is an empty string rather than None because src.run.setup() records every
+    # non-list option as str(value), which would write out a literal "None".
+    # argparse runs a string default through the type callable, so the empty
+    # default has to pass through it rather than be checked as a path.
+    subparser_run.add_argument(
+        '--cda-regions',
+        type = lambda option: permissions(parser, option, os.R_OK) if option else option,
+        required = False,
+        default = '',
+        help = argparse.SUPPRESS
+    )
+
+    # Bin size for cfDNAanalyzer's CNA feature. This is unrelated to --bin-size,
+    # which bins the fragment length histogram; cfDNAanalyzer bins the genome
+    # here, and only at the sizes its bundled correction tracks were built for.
+    subparser_run.add_argument(
+        '--cda-cna-bin-size',
+        type = lambda option: cda_bin_size(parser, option),
+        required = False,
+        default = 1000,
         help = argparse.SUPPRESS
     )
 

@@ -2,7 +2,7 @@
 
 ## 1. About
 
-The `--genome` option selects one entry from `config/genome.json`, and that entry supplies every reference file the pipeline uses. Two builds are bundled: `hg38` (the default) and `hg19`.
+The `--genome` option names one genome build, and that build supplies every reference file the pipeline uses. It takes either the alias of a build bundled in `config/genome.json` — `hg38` (the default) or `hg19` — or the path to a JSON file describing a build of your own, in the same shape. See [§5](#5-using-your-own-references) for the latter.
 
 `--genome` is **required for both input types**. For FastQ input it selects the alignment index in addition to the analysis references; for BAM input it selects the analysis references only, and the alignments are assumed to already match the build. See [Reference contig filter](contig-filter.md) for how that assumption is checked.
 
@@ -95,17 +95,61 @@ All bundled references are built against the **"clean" primary assembly** for th
 >
 > *hg38:* `hg38.gap.bed` &nbsp;·&nbsp; *hg19:* `hg19.gap.bed`
 
+---
+  `cda_genome`
+> **cfDNAanalyzer build name.** *Not a path.*
+> *used by:* [`cda_extract`](../analyses/cfdnaanalyzer.md) (as `-g`)
+>
+> The one reference cfDNAanalyzer cannot be pointed at a file for. Its `CNA`, `FP`, `PFE` and `TSSC` extractors read GC/mappability tracks, 100 kb bin definitions and gene annotations that ship inside its own installation, indexed by build name, and its driver refuses to start on any name but `hg19` or `hg38`.
+>
+> A bundled build is named for the assembly it is, so this key is redundant there and left out. A build of your own has to set it to whichever of the two its coordinates match before `--cda-features` can select anything; leaving it out drops every cfDNAanalyzer feature from the run.
+>
+> *hg38, hg19:* implied by the build name.
+
 ## 3. Optional files and graceful degradation
 
-`chrom_sizes`, `reference_fa`, `ref2bit`, `tss` and `tss_interval` gate which analyses run: the workflow only requests an output if the files that step needs are present for the selected build. `gap` and `blacklist` are softer — if either is absent, DELFI runs without the corresponding flag rather than being skipped. `dict` gates the [contig filter](contig-filter.md) alone. See [Pipeline overview §3](overview.md#3-which-steps-run) for the full dependency table.
+Every key except `tss_interval` is optional, and which ones a build supplies is what decides which analyses run: the workflow only requests an output if the files that step needs are present for the selected build. `chrom_sizes`, `reference_fa`, `ref2bit` and `tss` each gate the analyses that read them; `gap` and `blacklist` are softer — if either is absent, DELFI runs without the corresponding flag rather than being skipped; `dict` gates the [contig filter](contig-filter.md) alone; `cda_genome` gates cfDNAanalyzer as a whole. See [Pipeline overview §3](overview.md#3-which-steps-run) for the full dependency table.
+
+`tss_interval` is the exception because [`coverage`](../analyses/coverage.md) is not gated: the merged coverage workbook and the MultiQC report are targets of every run and both gather over it, so a build with no TSS interval BED to quantify over has nothing to fall back to.
 
 Both bundled builds define every key, so a default run of either executes the whole workflow.
 
-## 4. Using your own references
+## 4. Where the bundled references live
 
 On the Biowulf cluster all of the above are already on a shared path and nothing needs to be downloaded. Elsewhere, use <code>fragmentomics <b>install</b></code> to pull the resource bundle, then edit `config/genome.json` so each key points at your local copy.
 
-To add a build, add a new key under `references` with the same file keys. Two constraints are worth stating explicitly:
+## 5. Using your own references
 
-1. **Every file in a build must describe the same contig set.** Mixing a full-assembly 2bit with a primary-only `reference_fa`, or a `chr`-prefixed TSS file with an unprefixed chrom.sizes, produces empty or misleading output rather than an error. Note that the interval BED inherits its contig set from `reference_fa`, so an assembly FastA carrying alt or decoy scaffolds will tile windows over them too.
+There are two ways to run against reference files of your own.
+
+**Point `--genome` at a JSON file.** This needs no edit to the installation, so it is the way to use references the pipeline was not installed with — a build it does not ship, or a variant of one it does. The file holds a single build, in the shape of one entry of `config/genome.json`:
+
+```json
+{
+    "chrom_sizes":   "/refs/mm10.chrom.sizes",
+    "ref2bit":       "/refs/mm10.2bit",
+    "reference_fa":  "/refs/mm10.fa",
+    "dict":          "/refs/mm10.dict",
+    "tss":           "/refs/tss.mm10_sorted.bed",
+    "tss_interval":  "/refs/tss.mm10_interval_sorted.bed"
+}
+```
+
+```bash
+fragmentomics run \
+    --genome /refs/mm10.json \
+    --input *.bam \
+    --output pipeline_output
+```
+
+The build is **named after the config file**, so `mm10.json` labels its output `mm10` — that name is what appears in `intervals/{genome}_{size}_intervals.bed` and in `config.json`. Add a `"name"` key to choose the label yourself. The entry may also arrive wrapped in its build name (`{"mm10": {...}}`) or in the whole `genome.json` shape (`{"references": {"mm10": {...}}}`), so an entry lifted straight out of that file works as-is; in both of those the wrapping key names the build.
+
+The file is validated before the run starts: unrecognized keys are rejected rather than ignored (a misspelled key would otherwise silently disable the analyses that read it), and every path must exist and be readable. Relative paths resolve against the directory you invoke the pipeline from. Nothing needs to be bound into the containers by hand — the reference paths become bind points automatically, the same as the bundled ones. A build whose name matches a bundled one shadows it for that run, with a warning.
+
+**Or edit `config/genome.json`.** Adding a key under `references` with the same file keys makes the build a permanent alias of the installation, available to every run as `--genome <name>`. This is the better choice for a build a whole group will use; a JSON file is the better choice for a one-off or for iterating on a reference set.
+
+Either way, three constraints are worth stating explicitly:
+
+1. **Every file in a build must describe the same contig set.** Mixing a full-assembly 2bit with a primary-only `reference_fa`, or a `chr`-prefixed TSS file with an unprefixed chrom.sizes, produces empty or misleading output rather than an error. Note that the interval BED inherits its contig set from `reference_fa`, so an assembly FastA carrying alt or decoy scaffolds will tile windows over them too — and that a BAM missing a contig the FastA declares will fail the interval-based analyses, since they fetch every window from the BAM.
 2. **Provide a `dict` if you will use BAM input.** Without one, staged BAMs go straight to analysis with no check that they were aligned to your build — a silent failure mode the contig filter exists to prevent.
+3. **Set `cda_genome` if you want cfDNAanalyzer.** Only `hg19` and `hg38` are possible values, because they are the only builds cfDNAanalyzer ships references for. Without it, `--cda-features` selects nothing.

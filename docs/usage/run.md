@@ -22,6 +22,9 @@ $ fragmentomics run [--help] [--overwrite-pipeline-template] \
       [--interval INTERVAL] \
       [--bin-size BIN_SIZE] \
       [--mapscore MAPSCORE] [--baseqscore BASEQSCORE] \
+      [--cda-features CDA_FEATURES] \
+      [--cda-regions CDA_REGIONS] \
+      [--cda-cna-bin-size CDA_CNA_BIN_SIZE] \
       -g {{hg38,hg19}} \
       --input INPUT [INPUT ...] \
       --output OUTPUT
@@ -73,16 +76,34 @@ Each of the following arguments are required. Failure to provide a required argu
 > ***Example:*** `--output pipeline_output`
 
 ---  
-  `--genome {hg38,hg19}`
+  `--genome {hg38,hg19,GENOME_CONFIG.json}`
 > **Reference genome build.**  
 > *type: string*   
 > *default: hg38*  
 > 
-> Selects the bundled set of reference files the pipeline uses to characterize cfDNA fragmentation features. Choosing a genome build determines which chromosome sizes, 2bit reference sequence, genomic interval and TSS files, and any blacklist or gap files are used throughout the analysis. For FastQ input, it additionally selects the `bwa-mem2` reference index that reads are aligned against. For BAM input, it selects the sequence dictionary the input alignments are validated against. This argument is **required** for both FastQ and BAM input (BAM inputs still need the build to select the analysis references, and are assumed to already be aligned to it). Vaild options include: `hg38` or `hg19`.
+> Selects the set of reference files the pipeline uses to characterize cfDNA fragmentation features. Choosing a genome build determines which chromosome sizes, 2bit reference sequence, genomic interval and TSS files, and any blacklist or gap files are used throughout the analysis. For FastQ input, it additionally selects the `bwa-mem2` reference index that reads are aligned against. For BAM input, it selects the sequence dictionary the input alignments are validated against. This argument is **required** for both FastQ and BAM input (BAM inputs still need the build to select the analysis references, and are assumed to already be aligned to it).
 >
-> Every file each build provides, and which analysis uses it, is documented in [Reference files](../pipeline/references.md).
+> Two builds are bundled with the pipeline and named by alias: `hg38` or `hg19`.
+>
+> **A reference set of your own** can be used instead, by giving the path to a JSON file describing it rather than an alias. The file holds a single build, in the shape of one entry of the pipeline's `config/genome.json`:
+>
+> ```json
+> {
+>     "chrom_sizes":   "/refs/mm10.chrom.sizes",
+>     "ref2bit":       "/refs/mm10.2bit",
+>     "reference_fa":  "/refs/mm10.fa",
+>     "dict":          "/refs/mm10.dict",
+>     "tss":           "/refs/tss.mm10_sorted.bed",
+>     "tss_interval":  "/refs/tss.mm10_interval_sorted.bed"
+> }
+> ```
+>
+> The build is named after the config file, so `mm10.json` labels its output `mm10`; add a `"name"` key to choose the label yourself. Only `tss_interval` is required — every other key gates just the analyses that read it, so a build that leaves one out skips those rather than failing the run. Reference paths become container bind points automatically. Note that cfDNAanalyzer supports no build but `hg19` or `hg38`, so a build of your own has to declare which of the two its coordinates match, with a `"cda_genome"` key, before `--cda-features` can select anything.
+>
+> Every file a build can provide, which analysis uses it, and the other accepted spellings of a config file, are documented in [Reference files](../pipeline/references.md).
 >  
-> ***Example:*** `--genome hg38` 
+> ***Example:*** `--genome hg38`  
+> ***Example:*** `--genome /refs/mm10.json` 
 
 ### 2.2 Analysis options
 
@@ -198,6 +219,87 @@ Each of the following arguments are optional, and do not need to be provided. Wh
 > On the FastQ path the mean is measured *after* [adapter trimming](../pipeline/fastq-alignment.md#34-adapter-trimming-and-read-filtering), which `fastp` performs in the same pass, so low-quality adapter read-through at the 3′ end cannot push an otherwise good pair below the threshold. Adapter trimming is not configurable by this option and is always on for FastQ input.
 > 
 > ***Example:*** `--baseqscore 20`
+
+---  
+  `--cda-features CDA_FEATURES`  
+> **Comma-separated list of [cfDNAanalyzer](../analyses/cfdnaanalyzer.md) features to extract.**  
+> *type: str*  
+> *default: none*
+> 
+> [cfDNAanalyzer](https://github.com/LiymLab/cfDNAanalyzer) is an additional, and fairly expensive, feature extraction suite the pipeline can run over the same analysis BAMs. Only the features named here are extracted, and **none are extracted by default** — an empty selection leaves cfDNAanalyzer out of the run entirely, so no rules are defined and its container is never pulled.
+> 
+> Names are case-insensitive. `all` selects every feature, `none` selects none. Each feature is written to `cfdnaanalyzer/features/` as one or more CSV matrices of samples by measurements.
+> 
+> !!! warning "Feature extraction is all that runs"
+> 
+>     cfDNAanalyzer's feature processing, feature selection and machine learning modules are **never invoked**. No classifier is fit, no cross-validation is performed, and no sample is ever assigned a class or a probability. The pipeline passes `--noDA` and then asserts that no inference output directory was created, failing the job if one was. What you get are feature matrices; any inference over them is left entirely to you.
+> 
+> **Genome-wide**
+> 
+> | Name | Measures |
+> |------|----------|
+> | `CNA` | Copy number alterations, called with the bundled ichorCNA at `--cda-cna-bin-size` |
+> | `EM` | Fragment end motif frequencies and motif diversity score (MDS) |
+> | `FP` | Short/long fragmentation profile in 100 kb windows |
+> 
+> **Region-specific** — measured over `--cda-regions`
+> 
+> | Name | Measures |
+> |------|----------|
+> | `NOF` | Nucleosome occupancy and fuzziness |
+> | `NP` | Nucleosome profile (mean coverage, central coverage, amplitude) at the bundled Griffin transcription factor site lists |
+> | `WPS` | Windowed protection score, long and short |
+> | `OCF` | Orientation-aware cfDNA fragmentation |
+> | `EMR` | End motif frequencies and MDS, aggregated over and reported per region |
+> | `FPR` | Fragmentation profile per region |
+> 
+> **Transcription start sites**
+> 
+> | Name | Measures |
+> |------|----------|
+> | `PFE` | Promoter fragmentation entropy |
+> | `TSSC` | Average coverage around each TSS, using `--left-tss-flank` and `--right-tss-flank` |
+> 
+> !!! warning "`WPS` run time scales with the number of regions"
+> 
+>     `WPS` is scored one region at a time, so its run time grows with the size of `--cda-regions`. The default region set is the genome build's TSS intervals — roughly 62,000 regions — which is fine for the other region-specific features but makes `WPS` extremely slow. Pair it with a focused region BED.
+> 
+> !!! warning "`PFE` expects a deep targeted panel"
+> 
+>     cfDNAanalyzer drops any sample with less than 500x median depth over the promoters it scores, so a typical whole-genome sample will be **absent** from the `PFE` matrix. This is not an error; the matrix is written with only its header.
+> 
+> !!! warning "Most features are paired-end only"
+> 
+>     `EM`, `FP`, `NP`, `OCF`, `EMR`, `FPR` and `PFE` are paired-end only, and cfDNAanalyzer *fails* rather than skipping them if handed single-end reads. On single-end data select only `CNA`, `NOF`, `WPS` or `TSSC`.
+> 
+> A selected feature whose reference files the chosen `--genome` does not supply is dropped from the selection rather than failing the run. Both bundled builds supply everything, so in practice every feature is available. cfDNAanalyzer supports `hg19` and `hg38` only, so a `--genome` config file of your own must set `"cda_genome"` to whichever of the two its coordinates match; without it every feature here is dropped, with a warning saying so.
+> 
+> ***Example:*** `--cda-features CNA,EM,OCF`  
+> ***Example:*** `--cda-features all`
+
+---  
+  `--cda-regions CDA_REGIONS`  
+> **BED file of regions the region-specific cfDNAanalyzer features are measured over.**  
+> *type: file*  
+> *default: the genome build's TSS intervals*
+> 
+> Applies to `NOF`, `NP`, `WPS`, `OCF`, `EMR` and `FPR`. Only the first three columns are used, and the regions are sorted before use, so any BED flavor will do; comment, `track` and `browser` lines are stripped.
+> 
+> Without this option the genome build's TSS interval file is used, which is every Ensembl TSS padded by 2 kb — roughly 62,000 regions. Ignored when `--cda-features` selects no region-specific feature.
+> 
+> ***Example:*** `--cda-regions resources/promoters.bed`
+
+---  
+  `--cda-cna-bin-size CDA_CNA_BIN_SIZE`  
+> **Bin size, in kilobases, for the cfDNAanalyzer `CNA` feature.**  
+> *type: int*  
+> *default: 1000*
+> 
+> Restricted to `10`, `50`, `500` and `1000`. cfDNAanalyzer reads pre-computed GC and mappability tracks for the requested bin size out of the ichorCNA it bundles, and those exist only at those four sizes, so any other value is rejected by the frontend rather than failing mid-run.
+> 
+> Unrelated to `--bin-size`, which bins the fragment length histogram. Ignored when `--cda-features` does not select `CNA`.
+> 
+> ***Example:*** `--cda-cna-bin-size 500`
 
 ### 2.3 Orchestration options
 
