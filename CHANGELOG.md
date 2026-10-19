@@ -6,6 +6,29 @@ This changelog is automatically updated by [release-please](https://github.com/g
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/OpenOmics/fragmentomics/compare/v1.0.0...v1.1.0) (2026-10-19)
+
+
+### Features
+
+* **CDA:** dockerfile for cfDNAanalyzer ([25fcfef](https://github.com/OpenOmics/fragmentomics/commit/25fcfef4e6f42408491ca33fb8ee747509c1a721))
+* **CDA:** snakemake routing ([1effa87](https://github.com/OpenOmics/fragmentomics/commit/1effa8739f84070de9c1bdff1656694fec4bb849))
+* **cfdna:** documentation ([7e1ad61](https://github.com/OpenOmics/fragmentomics/commit/7e1ad61df680f31d9f05475c461e43df602854fe))
+* **cfdna:** implement cfdna feature extraction pipeline ([7261a94](https://github.com/OpenOmics/fragmentomics/commit/7261a94373873694174e9f4ebdb49974473e4ad7))
+* **cfdna:** infrastructure scripting ([90d7882](https://github.com/OpenOmics/fragmentomics/commit/90d7882d6b8d14e9d5e38a289585b9e9e09960ad))
+* **docker:** add dockerfile for cfdnaanalyzer ([6d59168](https://github.com/OpenOmics/fragmentomics/commit/6d5916890412a2bcc20c30e544b455266cc37946))
+
+
+### Bug Fixes
+
+* **cfdnaanalyzer:** ignore header-only inputs during schema construction ([a9c3b4d](https://github.com/OpenOmics/fragmentomics/commit/a9c3b4dfb64b57a7f6a0a1dff7acbf8916bdbf3b))
+* **cfdnaanalyzer:** use bounded-memory matrix joins ([c75cfb5](https://github.com/OpenOmics/fragmentomics/commit/c75cfb5d8330de76361129612534308c517cd455))
+* **docker:** detach R installs ([240afef](https://github.com/OpenOmics/fragmentomics/commit/240afef747fbaaf04571c559752ae9f159608eb0))
+* **docker:** inline R library installs ([cb0b59a](https://github.com/OpenOmics/fragmentomics/commit/cb0b59a7b94469c0d65d6ac7d3fbb130e4d241bf))
+* **docker:** ncurses bc and libtinfo5 ([89904fa](https://github.com/OpenOmics/fragmentomics/commit/89904faa84977ea05c9ddca839500de440b780ea))
+* **docker:** r2py configuration ([0780154](https://github.com/OpenOmics/fragmentomics/commit/0780154d8f98bba631be56e97b06c1d1d735cb92))
+* **run.sh:** revert job time change ([adbc735](https://github.com/OpenOmics/fragmentomics/commit/adbc735e295dfd62dffda9a0bc6db0a78ca837bb))
+
 ## [1.0.0](https://github.com/OpenOmics/fragmentomics/releases/tag/v1.0.0) (2026-08-25)
 
 ### ⚠ BREAKING CHANGES
