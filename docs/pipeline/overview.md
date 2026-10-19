@@ -91,12 +91,13 @@ Some steps are conditional on the reference files the selected build provides. T
 | [`agg-bw`](../analyses/agg-bw.md) on raw WPS | `tss`, `tss_interval` |
 | [`adjust-wps`](../analyses/adjust-wps.md), [`cleavage-profile`](../analyses/cleavage-profile.md), and their aggregates | `tss`, `tss_interval`, `chrom_sizes` |
 | [`filter_reference_contigs`](contig-filter.md) | BAM input **and** a `dict` entry |
+| [`cfDNAanalyzer`](../analyses/cfdnaanalyzer.md) | a `--cda-features` selection **and** a build cfDNAanalyzer supports (`hg19`, `hg38`, or a `cda_genome` entry naming one) |
 
 The three window-based analyses are gated on `reference_fa` because the genomic interval BED they share is tiled from it at run time by `make_intervals`, at the width given by [`--interval`](../usage/run.md), rather than read from a pre-made file. That job runs once per pipeline invocation, ahead of the analyses that consume it.
 
-The remaining steps are unconditional: [`frag-length-bins`](../analyses/frag-length-bins.md), [`coverage`](../analyses/coverage.md), `bam_to_bed` (it needs no reference file beyond the BAM), and the project-level [QC steps](quality-control.md) (`bam_stats`, `merge_coverage_excel`, `multiqc`) always run. Note that `coverage` needs the build's `tss_interval` file even though it is not gated on it, so a build lacking that entry fails at the coverage step rather than skipping it.
+The remaining steps are unconditional: [`frag-length-bins`](../analyses/frag-length-bins.md), [`coverage`](../analyses/coverage.md), `bam_to_bed` (it needs no reference file beyond the BAM), and the project-level [QC steps](quality-control.md) (`bam_stats`, `merge_coverage_excel`, `multiqc`) always run. Note that `coverage` needs the build's `tss_interval` file even though it is not gated on it, which is why that is the one reference key a build cannot leave out — a [`--genome` config file](references.md#5-using-your-own-references) without it is rejected before the run starts.
 
-Both bundled builds define every reference key, so a default `hg38` or `hg19` run executes every step.
+Both bundled builds define every reference key, so a default `hg38` or `hg19` run executes every step. A build of your own runs whichever subset of the table above its reference files cover.
 
 ## 4. Output directory layout
 

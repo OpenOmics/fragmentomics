@@ -211,6 +211,375 @@ def interval_size(parser, value, *args, **kwargs):
     return int(bases)
 
 
+# Reference file keys a genome build may define, each mapped to a short note on
+# what the pipeline loses without it. Every key is optional apart from the ones
+# in GENOME_REQUIRED_KEYS below: the workflow gates each analysis on the files it
+# needs being present for the selected build, so a build that omits a key simply
+# does not run the analyses that read it. The same keys are read by
+# workflow/rules/common.smk, so a key added here has to be read there too or it
+# will validate on the command line and then be ignored by the workflow.
+GENOME_REFERENCE_KEYS = {
+    'chrom_sizes':   'delfi, adjust-wps and cleavage-profile',
+    'ref2bit':       'end-motifs, mds, interval-end-motifs and delfi',
+    'reference_fa':  'the genomic interval BED, and so frag-length-intervals, '
+                     'interval-end-motifs and delfi; FastQ alignment',
+    'bwamem2_index': 'FastQ alignment (bwa-mem2)',
+    'dict':          'the reference contig filter, which is what checks BAM '
+                     'input really was aligned to this build',
+    'tss':           'wps and cleavage-profile',
+    'tss_interval':  'coverage, adjust-wps and agg-bw',
+    'blacklist':     "delfi's blacklist exclusion",
+    'gap':           "delfi's structural gap exclusion",
+    'cda_genome':    'every cfDNAanalyzer feature',
+}
+
+# Reference keys a build cannot leave out. Unlike the rest, the coverage
+# analysis is an unconditional target of every run (the merged coverage workbook
+# and the MultiQC report both gather over it), so a build with no TSS interval
+# BED to quantify over has nothing to fall back to and would fail mid-run.
+GENOME_REQUIRED_KEYS = ('tss_interval',)
+
+# Keys whose value is not a path and so is neither resolved nor permission
+# checked as one. cda_genome names which of cfDNAanalyzer's two supported builds
+# its bundled references should be read from, for a custom build that is
+# coordinate compatible with one of them.
+GENOME_NON_PATH_KEYS = ('cda_genome',)
+
+# The genome builds cfDNAanalyzer accepts for its -g option. Its driver rejects
+# anything else outright, and several of its features index bundled per-build
+# reference files by this name, so it is the one part of a custom build that
+# cannot simply be pointed at a user file.
+CDA_GENOME_BUILDS = ('hg19', 'hg38')
+
+# Names a custom genome build may go by. The name is not cosmetic: it is what
+# names the generated interval BED (intervals/{genome}_{size}_intervals.bed) and
+# is recorded in config.json, so it has to be safe to embed in a filename.
+GENOME_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+-]*$')
+
+
+def is_genome_config(value):
+    """Decides whether a --genome value names a custom genome config file rather
+    than one of the builds bundled in config/genome.json. A '.json' suffix is the
+    whole test: build aliases are bare names ('hg38'), so the two can never be
+    confused, and a value that was meant to be a file but is not named like one
+    fails as an unrecognized alias with a message that points at this.
+    @param value <str>:
+        Value provided to --genome
+    @return <bool>:
+        True when the value should be read as a genome config file
+    """
+    return str(value).lower().endswith('.json')
+
+
+def read_genome_config(path):
+    """Reads a custom genome config file into the build name and reference file
+    set the pipeline injects into config['references'].
+
+    The file holds one genome build, in the shape an entry of
+    config/genome.json has, so a build can be developed by copying an entry out
+    of that file. Three spellings are accepted, because all three are what
+    "one entry" plausibly means:
+
+      1. the reference keys on their own, which is the canonical form:
+             {"chrom_sizes": "...", "ref2bit": "...", ...}
+      2. the entry with its build name, exactly as it appears in genome.json:
+             {"mm10": {"chrom_sizes": "...", ...}}
+      3. the whole genome.json shape, for a single build:
+             {"references": {"mm10": {"chrom_sizes": "...", ...}}}
+
+    Form 1 takes the build name from an optional "name" key, falling back to the
+    config file's own basename; forms 2 and 3 take it from the key naming the
+    build. Relative reference paths are resolved against the working directory,
+    the same way every other path option of the frontend is, since the workflow
+    runs from the output directory and cannot resolve them itself.
+
+    Raises ValueError, rather than reporting the problem itself, so the same
+    validation can be surfaced as an argparse error at parse time and as a fatal
+    at config-build time.
+    @param path <str>:
+        Path to the genome config file
+    @return (name, references) <tuple[str, dict]>:
+        The build name and its reference files, with every path made absolute
+    """
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            "Genome config '{0}' is not valid JSON: {1}".format(path, e)
+        )
+    except OSError as e:
+        raise ValueError("Genome config '{0}' cannot be read: {1}".format(path, e))
+
+    if not isinstance(data, dict) or not data:
+        raise ValueError(
+            "Genome config '{0}' is not a non-empty JSON object! Please provide "
+            "the reference files of one genome build, in the shape of an entry "
+            "of config/genome.json.".format(path)
+        )
+
+    # Unwrap forms 3 then 2 down to the reference keys themselves. A build's
+    # reference values are all strings and a wrapper's are all objects, so the
+    # nesting is what tells the forms apart rather than any declared version.
+    if 'references' in data and isinstance(data['references'], dict):
+        data = data['references']
+    name = None
+    if data and all(isinstance(value, dict) for value in data.values()):
+        if len(data) != 1:
+            raise ValueError(
+                "Genome config '{0}' defines {1} genome builds ({2})! Please "
+                "provide exactly one; --genome selects a single build.".format(
+                    path, len(data), ', '.join(sorted(data))
+                )
+            )
+        name, data = next(iter(data.items()))
+
+    references = dict(data)
+    # An explicit name wins over the one the file or its wrapper key implies,
+    # so a config can be renamed or shared without changing what its output is
+    # labelled with.
+    name = references.pop('name', None) or name \
+        or os.path.basename(path).rsplit('.', 1)[0]
+
+    if not isinstance(name, str) or not GENOME_NAME_RE.match(name):
+        raise ValueError(
+            "Genome build name '{0}', from genome config '{1}', is not a valid "
+            "name! It names the generated interval BED, so it must start with a "
+            "letter or digit and hold only letters, digits, '.', '_', '+' or "
+            "'-'. Set a \"name\" key in the config to choose one "
+            "explicitly.".format(name, path)
+        )
+
+    if not references:
+        raise ValueError(
+            "Genome config '{0}' defines no reference files! Please provide at "
+            "least: {1}.".format(path, ', '.join(GENOME_REQUIRED_KEYS))
+        )
+
+    unknown = [key for key in references if key not in GENOME_REFERENCE_KEYS]
+    if unknown:
+        raise ValueError(
+            "Genome config '{0}' has unrecognized key(s) {1}! Supported keys "
+            "are: {2}. An unrecognized key is rejected rather than ignored "
+            "because a misspelled one would silently disable the analyses that "
+            "read it.".format(
+                path,
+                ', '.join("'{0}'".format(key) for key in sorted(unknown)),
+                ', '.join(sorted(GENOME_REFERENCE_KEYS))
+            )
+        )
+
+    missing = [key for key in GENOME_REQUIRED_KEYS if not references.get(key)]
+    if missing:
+        raise ValueError(
+            "Genome config '{0}' is missing required key(s) {1}! Every other "
+            "reference file gates the analyses that read it and may be left "
+            "out, but this one is read by an analysis every run performs "
+            "({2}).".format(
+                path,
+                ', '.join("'{0}'".format(key) for key in missing),
+                ', '.join(
+                    GENOME_REFERENCE_KEYS[key] for key in missing
+                )
+            )
+        )
+
+    for key, value in references.items():
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                "Genome config '{0}' key '{1}' is not a non-empty string! "
+                "Please give it a value, or leave the key out entirely to skip "
+                "the analyses that read it ({2}).".format(
+                    path, key, GENOME_REFERENCE_KEYS[key]
+                )
+            )
+
+    cda_genome = references.get('cda_genome')
+    if cda_genome and cda_genome not in CDA_GENOME_BUILDS:
+        raise ValueError(
+            "Genome config '{0}' sets cda_genome to '{1}', which cfDNAanalyzer "
+            "does not support! It must be one of: {2}. This key says which of "
+            "cfDNAanalyzer's own per-build references to read, so it is only "
+            "meaningful when your build is coordinate compatible with one of "
+            "them; leave it out to skip cfDNAanalyzer.".format(
+                path, cda_genome, ', '.join(CDA_GENOME_BUILDS)
+            )
+        )
+
+    # Absolute paths from here on. resolve_additional_bind_paths() derives the
+    # container bind points from these values and assumes they are absolute, so
+    # a relative reference path would otherwise be left unbound and unreadable
+    # inside the image.
+    for key, value in references.items():
+        if key in GENOME_NON_PATH_KEYS:
+            continue
+        references[key] = os.path.abspath(os.path.expanduser(value.strip()))
+
+    unreadable = [
+        "{0} ({1})".format(key, references[key])
+        for key in references
+        if key not in GENOME_NON_PATH_KEYS
+        and not os.access(references[key], os.R_OK)
+    ]
+    if unreadable:
+        raise ValueError(
+            "Genome config '{0}' points at reference file(s) that do not exist "
+            "or cannot be read:\n  {1}".format(path, '\n  '.join(unreadable))
+        )
+
+    return name, references
+
+
+def genome_build(parser, value, repo_path, *args, **kwargs):
+    """Checks a --genome value, which is either the alias of a build bundled in
+    the pipeline's config/genome.json or the path to a custom genome config file
+    (see read_genome_config()). The value is returned as given, i.e. resolution
+    into the reference file set happens later, in src.run.setup(), against the
+    genome.json that was copied into the output directory.
+    @param parser <argparse.ArgumentParser() object>:
+        Argparse parser object
+    @param value <str>:
+        Value provided on the command line
+    @param repo_path <str>:
+        Path to the pipeline's installation, holding config/genome.json
+    @return <str>:
+        A bundled build alias, or an absolute path to a genome config file
+    """
+    if is_genome_config(value):
+        path = permissions(parser, value, os.R_OK)
+        try:
+            read_genome_config(path)
+        except ValueError as e:
+            parser.error(str(e))
+        return path
+
+    bundled = os.path.join(repo_path, 'config', 'genome.json')
+    try:
+        with open(bundled) as fh:
+            builds = sorted(json.load(fh).get('references', {}))
+    except (OSError, json.JSONDecodeError):
+        # Without the bundled config there is nothing to check the alias
+        # against. Let it through rather than failing on the frontend's own
+        # installation: src.run.setup() checks it again, against the copy in the
+        # output directory, which is the one the workflow actually reads.
+        return value
+
+    if value not in builds:
+        parser.error(
+            "Genome build '{0}' is not one of the bundled builds ({1})! Please "
+            "provide one of those, or the path to a genome config JSON file "
+            "describing your own reference files.".format(
+                value, ', '.join(builds)
+            )
+        )
+
+    return value
+
+
+# The feature extractors cfDNAanalyzer exposes through its -F option, grouped
+# the way its documentation groups them. Every one of these is a paired-end
+# analysis apart from CNA and TSSC, which is not a restriction worth encoding
+# here because the pipeline only supports paired-end input to begin with. The
+# same names are the keys of CDA_FEATURE_MATRICES in workflow/scripts/common.py,
+# which maps each feature to the output matrices it produces, so a feature added
+# here has to be added there too or the workflow will not know what it writes.
+CDA_FEATURES = (
+    # Genome-wide: copy number alteration, end motif, fragmentation profile
+    'CNA', 'EM', 'FP',
+    # Region-specific: nucleosome occupancy/fuzziness, nucleosome profile,
+    # windowed protection score, orientation-aware fragmentation, regional end
+    # motif, regional fragmentation profile
+    'NOF', 'NP', 'WPS', 'OCF', 'EMR', 'FPR',
+    # Transcription start site: promoter fragmentation entropy, TSS coverage
+    'PFE', 'TSSC',
+)
+
+
+def cda_feature_list(parser, value, *args, **kwargs):
+    """Parses the comma-separated feature list given to --cda-features into the
+    cfDNAanalyzer feature names the workflow selects its rules with. Feature
+    names are matched case-insensitively, and the two collective names are
+    accepted as shorthand: 'all' selects every feature and 'none' selects none,
+    which is the default and leaves cfDNAanalyzer out of the run entirely.
+
+    The returned list is ordered and de-duplicated by CDA_FEATURES rather than
+    by the order the features were typed in, so that every spelling of the same
+    request produces the same pipeline targets.
+    @param parser <argparse.ArgumentParser() object>:
+        Argparse parser object
+    @param value <str>:
+        Value provided on the command line, i.e. 'CNA,EM,OCF'
+    @return features <list[str]>:
+        The selected cfDNAanalyzer features, canonically named and ordered
+    """
+    requested = [feature.strip().upper() for feature in str(value).split(',')]
+    requested = [feature for feature in requested if feature]
+
+    if not requested or requested == ['NONE']:
+        return []
+    if requested == ['ALL']:
+        return list(CDA_FEATURES)
+
+    # 'all'/'none' are collective, so mixing either with a named feature is
+    # ambiguous rather than additive, i.e. 'none,CNA' has no useful reading.
+    # Checked before the unknown-name check below, which would otherwise claim
+    # 'ALL' is an unrecognized feature and bury the actual mistake.
+    if 'ALL' in requested or 'NONE' in requested:
+        parser.error(
+            "cfDNAanalyzer feature list '{0}' mixes 'all' or 'none' with named "
+            "features! Please provide either one of those on its own, or a "
+            "comma-separated list of feature names.".format(value)
+        )
+
+    unknown = [feature for feature in requested if feature not in CDA_FEATURES]
+    if unknown:
+        parser.error(
+            "cfDNAanalyzer feature(s) {0} are not recognized! Please provide a "
+            "comma-separated list of any of: {1}; or 'all' for every feature, "
+            "or 'none' to skip cfDNAanalyzer.".format(
+                ', '.join("'{0}'".format(feature) for feature in unknown),
+                ', '.join(CDA_FEATURES)
+            )
+        )
+
+    return [feature for feature in CDA_FEATURES if feature in requested]
+
+
+def cda_bin_size(parser, value, *args, **kwargs):
+    """Checks that a copy number alteration bin size is one cfDNAanalyzer can
+    run. Its CNA extractor reads pre-computed GC and mappability correction
+    tracks that ship with the ichorCNA it bundles, and those exist at four bin
+    sizes only, so any other size fails inside the container rather than at the
+    command line.
+    @param parser <argparse.ArgumentParser() object>:
+        Argparse parser object
+    @param value <str>:
+        Value provided on the command line
+    @return binsize <int>:
+        The bin size, in kilobases
+    """
+    supported = (10, 50, 500, 1000)
+    try:
+        binsize = int(value)
+    except ValueError:
+        parser.error(
+            "cfDNAanalyzer CNA bin size '{0}' is not an integer! Please "
+            "provide one of: {1} (kilobases).".format(
+                value, ', '.join(str(size) for size in supported)
+            )
+        )
+    if binsize not in supported:
+        parser.error(
+            "cfDNAanalyzer CNA bin size '{0}' is not supported! The bundled "
+            "GC and mappability tracks only exist for these bin sizes, in "
+            "kilobases: {1}.".format(
+                value, ', '.join(str(size) for size in supported)
+            )
+        )
+
+    return binsize
+
+
 def standard_input(parser, path, *args, **kwargs):
     """Checks for standard input when provided or permissions using permissions().
     @param parser <argparse.ArgumentParser() object>:

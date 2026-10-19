@@ -4,6 +4,8 @@
 
 The analysis half of the pipeline runs [FinaleToolkit](https://github.com/epifluidlab/FinaleToolkit), a Python package for cfDNA fragmentation analysis. Each page in this section documents one FinaleToolkit subcommand as this pipeline invokes it: what it measures, exactly which flags the pipeline passes, what the output looks like, and which `--genome` reference files and <code>fragmentomics <b>run</b></code> options control it.
 
+The one exception is [`cfDNAanalyzer`](cfdnaanalyzer.md), a second and entirely separate feature extraction suite. It is **off by default** and runs only if [`--cda-features`](../usage/run.md#22-analysis-options) selects something, so unless you ask for it none of its rules are defined and its container is never pulled.
+
 Every analysis reads the same input — the canonical per-sample analysis BAM, `bams/{sample}.sorted.bam` — regardless of whether that BAM came from [aligning FastQ files](../pipeline/fastq-alignment.md) or from [staging and filtering user BAMs](../pipeline/bam-normalization.md).
 
 !!! note "These are workflow steps, not commands you run"
@@ -29,6 +31,20 @@ Every analysis reads the same input — the canonical per-sample analysis BAM, `
 | [`agg-bw`](agg-bw.md) | Aggregate of a bigWig signal across all windows | `*_aggr.wig` |
 
 </section>
+
+And, optional and off unless selected:
+
+<section markdown="1">
+
+| Analysis | Measures | Output |
+|----------|----------|--------|
+| [`cfDNAanalyzer`](cfdnaanalyzer.md) | Up to eleven further feature types — copy number, nucleosome occupancy and profiling, region-level end motifs and fragmentation, promoter entropy | `cfdnaanalyzer/features/{matrix}.csv` |
+
+</section>
+
+!!! note "cfDNAanalyzer extracts features only"
+
+    cfDNAanalyzer also ships feature selection and machine learning modules. The pipeline never invokes them — it passes `--noDA` and asserts afterwards that no inference output was produced. See [its page](cfdnaanalyzer.md#1-about) for the detail.
 
 ## 3. Shared conventions
 

@@ -113,4 +113,4 @@ Coverage is single-threaded by default and is one of the longer-running steps on
 
 ## 5. Requires
 
-The `tss_interval` file for the selected genome build. Unlike most analyses this step is **not** conditional on that entry being present — it always runs, so a custom build without `tss_interval` fails here rather than skipping the analysis. Both bundled builds provide it.
+The `tss_interval` file for the selected genome build. Unlike most analyses this step is **not** conditional on that entry being present — it always runs. That makes `tss_interval` the one reference key a build cannot leave out, so a `--genome` config file without it is [rejected before the run starts](../pipeline/references.md#3-optional-files-and-graceful-degradation) rather than failing here. Both bundled builds provide it.

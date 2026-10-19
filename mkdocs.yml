@@ -120,6 +120,7 @@ nav:
     - adjust-wps: analyses/adjust-wps.md
     - cleavage-profile: analyses/cleavage-profile.md
     - agg-bw: analyses/agg-bw.md
+    - cfDNAanalyzer: analyses/cfdnaanalyzer.md
   - FAQ:
     - General Questions: faq/questions.md
   - License: license.md
